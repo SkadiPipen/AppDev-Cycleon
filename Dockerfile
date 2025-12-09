@@ -5,15 +5,15 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Copy Vite config (CRITICAL - was missing)
-COPY vite.config.ts ./
+# Install ALL dependencies (including devDependencies)
+RUN npm ci
 
 # Copy source files
+COPY vite.config.ts ./
 COPY resources/ ./resources/
 COPY public/ ./public/
 
-# Install dependencies and build
-RUN npm ci --only=production
+# Build
 RUN npm run build
 
 # Stage 2 - Backend (Laravel + PHP + Nginx)
