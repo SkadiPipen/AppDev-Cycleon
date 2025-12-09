@@ -1,20 +1,20 @@
-# Stage 1 - Build Frontend (Vite with Wayfinder)
+# Stage 1 - Build Frontend
 FROM node:20-alpine AS frontend
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install ALL dependencies
-RUN npm ci
+# Copy modified vite config (without wayfinder)
+COPY vite.config.build.ts ./vite.config.ts
 
 # Copy source files
-COPY vite.config.ts ./
 COPY resources/ ./resources/
 COPY public/ ./public/
 
-# Build - skip wayfinder type generation
-RUN VITE_WAYFINDER_GENERATE_TYPES=false npm run build
+# Install and build
+RUN npm ci
+RUN npm run build
 
 # Stage 2 - Backend (Laravel + PHP + Nginx)
 FROM php:8.2-fpm-alpine
