@@ -15,17 +15,18 @@ import {
     SheetTrigger,
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
-import { growAGarden } from '@/routes';
 import { type BreadcrumbItem, type NavItem, type SharedData } from '@/types';
 import { Link, usePage } from '@inertiajs/react';
 import { Menu } from 'lucide-react';
 import AppLogo from './app-logo';
 import AppLogoIcon from './app-logo-icon';
 
+
+
 const mainNavItems: NavItem[] = [
     {
         title: 'Grow a Garden',
-        href: growAGarden(),
+        href: '/grow-a-garden',
         icon: "/icons/grow-a-garden.webp",
     },
 ];
