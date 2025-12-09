@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: laravel-app
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: APP_URL
+        sync: false
+      - key: APP_KEY
+        generateValue: true
+      - key: VITE_APP_NAME
+        value: "My Laravel App"
+    buildCommand: ""
+    startCommand: ""
+    healthCheckPath: /health
+    healthCheckTimeout: 30
+    autoDeploy: true
