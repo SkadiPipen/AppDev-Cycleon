@@ -61,16 +61,16 @@ RUN chown -R www-data:www-data \
     /var/www/html/bootstrap/cache \
     /var/www/html/public/build
 
-# Create minimal .env for production
+# Add these lines to your .env creation:
 RUN echo "APP_ENV=production" > .env && \
     echo "APP_DEBUG=false" >> .env && \
     echo "APP_KEY=${APP_KEY:-base64:$(openssl rand -base64 32)}" >> .env && \
-    echo "APP_URL=https://appdev-cycleon.onrender.com" >> .env && \
     echo "LOG_CHANNEL=stderr" >> .env && \
     echo "SESSION_DRIVER=cookie" >> .env && \
     echo "CACHE_STORE=file" >> .env && \
     echo "QUEUE_CONNECTION=sync" >> .env && \
-    echo "VITE_APP_NAME=\"My Laravel App\"" >> .env
+    echo "VITE_APP_NAME=\"My Laravel App\"" >> .env && \
+    echo "ASSET_URL=https://appdev-cycleon.onrender.com" >> .env
 
 # Generate app key
 RUN php artisan key:generate --force
