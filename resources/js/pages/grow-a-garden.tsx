@@ -219,7 +219,7 @@ export default function GrowAGarden() {
             setFetchingShops(prev => new Set(prev).add(shopKey));
 
             // Fetch ALL data
-            const response = await fetch('/proxy/stock/grow-a-garden');
+            const response = await fetch('https://appdev-cycleon.onrender.com/proxy/stock/grow-a-garden');
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
 
