@@ -1,15 +1,11 @@
-# Stage 1 - Build Frontend (Vite with Wayfinder) - UPDATED NODE VERSION
+# Stage 1 - Build Frontend (Vite with Wayfinder)
 FROM node:20-alpine AS frontend
-
-# Install PHP in frontend stage for wayfinder plugin
-RUN apk add --no-cache php
-
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install ALL dependencies (including devDependencies)
+# Install ALL dependencies
 RUN npm ci
 
 # Copy source files
@@ -17,21 +13,13 @@ COPY vite.config.ts ./
 COPY resources/ ./resources/
 COPY public/ ./public/
 
-# Copy composer files for wayfinder plugin
-COPY composer.json ./
-COPY composer.lock ./
-
-# Install PHP dependencies for wayfinder
-RUN apk add --no-cache composer && \
-    composer install --no-dev --no-interaction
-
-# Build
-RUN npm run build
+# Build - skip wayfinder type generation
+RUN VITE_WAYFINDER_GENERATE_TYPES=false npm run build
 
 # Stage 2 - Backend (Laravel + PHP + Nginx)
 FROM php:8.2-fpm-alpine
 
-# Install system dependencies (REMOVED postgresql-dev)
+# Install system dependencies (NO DATABASE)
 RUN apk add --no-cache \
     nginx \
     supervisor \
@@ -45,7 +33,7 @@ RUN apk add --no-cache \
     freetype-dev \
     oniguruma-dev
 
-# Install PHP extensions (REMOVED pdo_pgsql)
+# Install PHP extensions (NO DATABASE)
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install \
     zip \
