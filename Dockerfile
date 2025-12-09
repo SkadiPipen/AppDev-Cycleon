@@ -65,6 +65,7 @@ RUN chown -R www-data:www-data \
 RUN echo "APP_ENV=production" > .env && \
     echo "APP_DEBUG=false" >> .env && \
     echo "APP_KEY=${APP_KEY:-base64:$(openssl rand -base64 32)}" >> .env && \
+    echo "APP_URL=https://appdev-cycleon.onrender.com" >> .env && \
     echo "LOG_CHANNEL=stderr" >> .env && \
     echo "SESSION_DRIVER=cookie" >> .env && \
     echo "CACHE_STORE=file" >> .env && \
