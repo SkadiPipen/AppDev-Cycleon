@@ -17,7 +17,7 @@ RUN npm ci
 RUN npm run build
 
 # Stage 2 - Backend (Laravel + PHP + Nginx)
-FROM php:8.2-fpm-alpine
+FROM php:8.4-fpm-alpine
 
 # Install system dependencies (NO DATABASE)
 RUN apk add --no-cache \
