@@ -5,11 +5,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Copy necessary files for Vite build
-COPY vite.config.js ./
-COPY tailwind.config.js ./  # If you have this file
-COPY tsconfig.json ./       # If you have this file
-COPY postcss.config.js ./   # If you have this file
+# Copy Vite config (CRITICAL - was missing)
+COPY vite.config.ts ./
 
 # Copy source files
 COPY resources/ ./resources/
