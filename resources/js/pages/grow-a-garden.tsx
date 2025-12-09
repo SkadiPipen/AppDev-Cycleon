@@ -4,13 +4,14 @@ import { H3 } from '@/components/h3';
 import { H4 } from '@/components/h4';
 import { PlaceholderPattern } from '@/components/ui/placeholder-pattern';
 import AppLayout from '@/layouts/app-layout';
-import { growAGarden } from '@/routes';
 import { type BreadcrumbItem } from '@/types';
 import { Head } from '@inertiajs/react';
 import StockCard from "@/components/stock-card";
 import WeatherCard from "@/components/weather-card";
 import {RotateCcw} from "lucide-react";
 import {Button} from "@/components/ui/button";
+
+const growAGarden = () => ({ url: '/grow-a-garden' });
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
