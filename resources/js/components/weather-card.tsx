@@ -62,44 +62,10 @@ export default function WeatherCard({
         return <Cloud className="h-6 w-6" />;
     };
 
-    // Calculate remaining time for weather event
-    const getRemainingTime = (endTimestamp: number) => {
-        const now = currentTime;
-        const remainingSeconds = endTimestamp - now;
-
-        if (remainingSeconds <= 0) return "Ended";
-
-        const hours = Math.floor(remainingSeconds / 3600);
-        const minutes = Math.floor((remainingSeconds % 3600) / 60);
-        const seconds = remainingSeconds % 60;
-
-        if (hours > 0) {
-            return `${hours}h ${minutes}m`;
-        } else if (minutes > 0) {
-            return `${minutes}m`;
-        } else {
-            return `${seconds}s`;
-        }
-    };
-
-    // Format time nicely with singular/plural
-    const formatRemainingTime = (endTimestamp: number) => {
-        const now = currentTime;
-        const remainingSeconds = endTimestamp - now;
-
-        if (remainingSeconds <= 0) return "Ended";
-
-        const hours = Math.floor(remainingSeconds / 3600);
-        const minutes = Math.floor((remainingSeconds % 3600) / 60);
-
-        if (hours > 0) {
-            return `${hours}h ${minutes}m`;
-        } else if (minutes > 0) {
-            return `${minutes}m`;
-        } else {
-            const seconds = remainingSeconds % 60;
-            return `${seconds}s`;
-        }
+    // Format time nicely
+    const formatTime = (timestamp: number) => {
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
     // Handle broken images
@@ -113,6 +79,9 @@ export default function WeatherCard({
             parent.appendChild(fallback);
         }
     };
+
+    // Filter to show only active weather events
+    const activeWeather = items.filter(weather => weather.active === true);
 
     // Show loading state
     if (isLoading) {
@@ -163,13 +132,14 @@ export default function WeatherCard({
                 <CardTitle className="text-lg flex justify-between items-center">
                     <span>{title}</span>
                     <span className="text-sm font-normal bg-primary/20 px-2 py-1 rounded">
-                        {items.length} {items.length === 1 ? 'event' : 'events'}
+                        {activeWeather.length} {activeWeather.length === 1 ? 'event' : 'events'}
                     </span>
                 </CardTitle>
                 <CardDescription>
                     <div className="space-y-1">
                         <div>Current weather conditions in Grow a Garden</div>
                         <div className="flex items-center gap-2">
+
                         </div>
                     </div>
                 </CardDescription>
@@ -177,24 +147,24 @@ export default function WeatherCard({
 
             <CardContent>
                 <ScrollArea className="h-[24rem] overflow-y-auto">
-                    {items.length === 0 ? (
+                    {activeWeather.length === 0 ? (
                         <div className="text-center py-8 text-gray-500">
-                            No weather events active
+                            No active weather events
                         </div>
                     ) : (
                         <div className="flex flex-col gap-3">
-                            {items.map((weather, i) => {
-                                const remainingTime = formatRemainingTime(weather.end_timestamp_unix);
+                            {activeWeather.map((weather, i) => {
                                 const imageUrl = weather.Image || `https://cdn.3itx.tech/image/GrowAGarden/${weather.Name.toLowerCase().replace(/\s+/g, '_')}`;
 
                                 return (
                                     <Item variant="muted" key={i} className="bg-primary/10 hover:bg-primary/20">
-                                        <ItemMedia variant="image" className="relative">
-                                            <div className="relative">
+                                        {/* CENTERED ICON */}
+                                        <div className="flex items-center justify-center min-w-[3rem]">
+                                            <div className="relative w-12 h-12">
                                                 <img
                                                     src={imageUrl}
                                                     alt={weather.DisplayName}
-                                                    className="rounded-md w-12 h-12 object-cover"
+                                                    className="rounded-md w-full h-full object-cover"
                                                     onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
                                                         handleImageError(e, weather.DisplayName);
                                                     }}
@@ -202,19 +172,19 @@ export default function WeatherCard({
                                                 />
                                                 {/* Fallback */}
                                                 <div
-                                                    className="rounded-md w-12 h-12 bg-primary/20 flex items-center justify-center absolute inset-0 hidden"
+                                                    className="rounded-md w-full h-full bg-primary/20 flex items-center justify-center absolute inset-0 hidden"
                                                     id={`weather-fallback-${i}`}
                                                 >
                                                     {getWeatherIcon(weather.Name)}
                                                 </div>
                                             </div>
-                                        </ItemMedia>
+                                        </div>
 
                                         <ItemContent>
                                             <div className="flex items-center gap-2">
                                                 <ItemTitle className="truncate">{weather.DisplayName}</ItemTitle>
-                                                <span className={`px-2 py-0.5 text-xs rounded ${weather.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-                                                    {weather.active ? 'Active' : 'Inactive'}
+                                                <span className="px-2 py-0.5 text-xs rounded bg-green-100 text-green-800">
+                                                    Active
                                                 </span>
                                             </div>
                                             <ItemDescription className="text-sm">
@@ -223,15 +193,12 @@ export default function WeatherCard({
                                         </ItemContent>
 
                                         <ItemContent className="text-right">
-                                            <div className="text-xl font-bold">
-                                                {remainingTime}
+                                            <div className="text-lg font-medium">
+                                                {formatTime(weather.start_timestamp_unix)}
                                             </div>
-                                            <ItemDescription className="text-xs">
-                                                remaining
+                                            <ItemDescription className="text-xs text-gray-500">
+                                                started
                                             </ItemDescription>
-                                            <div className="text-xs text-gray-500 mt-1">
-                                                Started: {new Date(weather.start_timestamp_unix * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </div>
                                         </ItemContent>
                                     </Item>
                                 );

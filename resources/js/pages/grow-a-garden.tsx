@@ -8,9 +8,32 @@ import { type BreadcrumbItem } from '@/types';
 import { Head } from '@inertiajs/react';
 import StockCard from "@/components/stock-card";
 import WeatherCard from "@/components/weather-card";
-import {RotateCcw} from "lucide-react";
-import {Button} from "@/components/ui/button";
-
+import { RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+    Card,
+    CardHeader,
+    CardTitle,
+    CardContent,
+    CardFooter,
+    CardDescription
+} from "@/components/ui/card";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { BarChart } from "recharts"; // Only need BarChart from recharts
+import {
+    ChartContainer,
+    ChartTooltip,
+    ChartTooltipContent,
+    ChartBar,
+    ChartXAxis,
+    ChartYAxis,
+} from "@/components/ui/chart";
 const growAGarden = () => ({ url: '/grow-a-garden' });
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -33,11 +56,170 @@ interface WeatherData {
     lastUpdated: string;
 }
 
+interface AvailableItem {
+    value: string;
+    label: string;
+}
+
 interface CountdownInfo {
     minutes: number;
     seconds: number;
     totalSeconds: number;
 }
+
+// Define types for forecast data
+interface ForecastItem {
+    name: string;
+    icon: string;
+    image: string;
+    lastSeen: string;
+    count: number;
+    frequency: number; // The numeric frequency/percentage (e.g., 100)
+    frequencyString: string; // The descriptive string (e.g., "Appears every 4 hrs")
+    shops: string[];
+    forecastData: Array<{ day: string; value: number }>;
+}
+
+
+
+const calculatePercentage = (frequency: number): string => {
+    return `${frequency}%`;
+};
+
+const calculateFrequencyPercentage = (frequencyString: string): string => {
+    if (!frequencyString) return '0%';
+
+    // Handle different frequency formats
+    const lower = frequencyString.toLowerCase();
+
+    // If it already contains a percentage, return it
+    if (lower.includes('%')) {
+        return frequencyString;
+    }
+
+    // Parse "x times per y" format
+    const timesMatch = lower.match(/(\d+(\.\d+)?)\s*times?/i);
+    if (timesMatch) {
+        const times = parseFloat(timesMatch[1]);
+        // Assuming max frequency is 10 times per period for 100%
+        const percentage = Math.min((times / 10) * 100, 100);
+        return `${percentage.toFixed(1)}%`;
+    }
+
+    // Parse "once every x" format
+    const everyMatch = lower.match(/once\s*every\s*(\d+(\.\d+)?)/i);
+    if (everyMatch) {
+        const days = parseFloat(everyMatch[1]);
+        const percentage = (1 / days) * 100;
+        return `${percentage.toFixed(1)}%`;
+    }
+
+    // Parse "x out of y" format
+    const outOfMatch = lower.match(/(\d+)\s*out\s*of\s*(\d+)/i);
+    if (outOfMatch) {
+        const numerator = parseInt(outOfMatch[1]);
+        const denominator = parseInt(outOfMatch[2]);
+        if (denominator > 0) {
+            const percentage = (numerator / denominator) * 100;
+            return `${percentage.toFixed(1)}%`;
+        }
+    }
+
+    // Parse simple number
+    const numberMatch = lower.match(/(\d+(\.\d+)?)/);
+    if (numberMatch) {
+        const number = parseFloat(numberMatch[1]);
+        // Assuming it's a percentage out of 10
+        const percentage = Math.min((number / 10) * 100, 100);
+        return `${percentage.toFixed(1)}%`;
+    }
+
+    // Default fallback
+    return '0%';
+};
+
+// Helper function to format to PH timezone (UTC+8)
+const formatToPHTime = (dateTimeString: string): string => {
+    if (!dateTimeString) return 'Unknown';
+
+    try {
+        const date = new Date(dateTimeString);
+
+        const phDate = new Date(date.getTime() + (8 * 60 * 60 * 1000));
+
+        return phDate.toLocaleDateString('en-US', {
+            timeZone: 'Asia/Manila',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+    } catch (error) {
+        return dateTimeString;
+    }
+};
+
+
+// Helper function to generate last 7 days labels
+const generateLast7Days = (): string[] => {
+    const days = [];
+    const today = new Date();
+
+    for (let i = 6; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(today.getDate() - i);
+
+        const formattedDate = date.toLocaleDateString('en-US', {
+            timeZone: 'Asia/Manila',
+            month: 'short',
+            day: 'numeric'
+        });
+
+        days.push(formattedDate);
+    }
+
+    return days;
+};
+
+// Helper function to get weather icon
+const getWeatherIcon = (weatherName: string): string => {
+    const weatherIcons: Record<string, string> = {
+        'heatwave': '🔥',
+        'meteor': '☄️',
+        'rain': '🌧️',
+        'sandstorm': '🌪️',
+        'snow': '❄️',
+        'thunder': '⛈️'
+    };
+    return weatherIcons[weatherName.toLowerCase()] || '⛅';
+};
+
+// Helper function to get category icon
+const getCategoryIcon = (category: string): string => {
+    const categoryIcons: Record<string, string> = {
+        'seed': '🌱',
+        'gear': '🛠️',
+        'event': '🎪',
+        'egg': '🥚',
+        'cosmetic': '💄',
+        'weather': '⛅'
+    };
+    return categoryIcons[category] || '📦';
+};
+
+const getWeatherIconFromName = (weatherName: string): string => {
+    const weatherNameLower = weatherName.toLowerCase();
+
+    if (weatherNameLower.includes('rain')) return '🌧️';
+    if (weatherNameLower.includes('sun') || weatherNameLower.includes('heat')) return '☀️';
+    if (weatherNameLower.includes('snow')) return '❄️';
+    if (weatherNameLower.includes('storm') || weatherNameLower.includes('thunder')) return '⛈️';
+    if (weatherNameLower.includes('wind') || weatherNameLower.includes('sand')) return '💨';
+    if (weatherNameLower.includes('meteor')) return '☄️';
+
+    return '⛅';
+};
 
 export default function GrowAGarden() {
     const [seedStock, setSeedStock] = useState<StockItem[]>([]);
@@ -48,6 +230,14 @@ export default function GrowAGarden() {
     const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
     const [lastUpdateTime, setLastUpdateTime] = useState<Date>(new Date());
     const [isLoading, setIsLoading] = useState(true);
+
+    // For forecast section
+    const [selectedCategory, setSelectedCategory] = useState<string>("");
+    const [selectedItem, setSelectedItem] = useState<string>("");
+    const [availableItems, setAvailableItems] = useState<AvailableItem[]>([]);
+    const [selectedItemData, setSelectedItemData] = useState<ForecastItem | null>(null);
+    const [selectedWeatherData, setSelectedWeatherData] = useState<ForecastItem | null>(null);
+    const [isLoadingForecast, setIsLoadingForecast] = useState(false);
 
     // For tracking which shops are currently fetching
     const [fetchingShops, setFetchingShops] = useState<Set<string>>(new Set());
@@ -187,7 +377,6 @@ export default function GrowAGarden() {
                 seed: 5, gear: 5, event: 30, egg: 30, cosmetic: 240
             }[shopKey] || 5;
 
-            // For cosmetic shop, format as HH:MM:SS
             if (shopKey === 'cosmetic') {
                 const hours = Math.floor(intervalMinutes / 60);
                 const minutes = intervalMinutes % 60;
@@ -218,15 +407,12 @@ export default function GrowAGarden() {
 
             setFetchingShops(prev => new Set(prev).add(shopKey));
 
-            // Fetch ALL data
-            const response = await fetch('https://appdev-cycleon.onrender.com/proxy/stock/grow-a-garden');
+            const response = await fetch('/proxy/stock/grow-a-garden');
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
 
-            // DEBUG: Log available keys
             console.log(`🔑 Available keys for ${shopName}:`, Object.keys(data));
 
-            // SIMPLE EXTRACTION - no complex logic
             let shopData = [];
 
             if (shopKey === 'seed') {
@@ -473,7 +659,6 @@ export default function GrowAGarden() {
                         stock: Number(stockCount),
                         quantity: Number(stockCount),
                         image: itemImage,
-
                     };
                 });
 
@@ -548,7 +733,6 @@ export default function GrowAGarden() {
         };
     }, [fetchAllData, fetchWeatherData, startShopCountdown]);
 
-
     // Transform weather data
     const weatherEvents = weatherData ? [{
         Name: weatherData.type,
@@ -583,39 +767,36 @@ export default function GrowAGarden() {
     return (
         <AppLayout breadcrumbs={breadcrumbs} data-theme="red">
             <Head title="Grow a Garden" />
-            <div className="flex h-full flex-1 flex-col gap-4 overflow-x-auto rounded-xl p-4 bg-transparent">
-                <div className="flex flex-col items-center justify-center w-full my-16 leading-none bg-transparent">
-                    <H3>
+            <div className="flex h-full flex-1 flex-col gap-4 overflow-x-auto rounded-xl p-4 md:p-6 bg-transparent">
+                {/* Hero Section */}
+                <div className="flex flex-col items-center justify-center w-full my-8 md:my-16 leading-none bg-transparent text-center px-4">
+                    <H3 className="text-base md:text-lg lg:text-xl">
                         Stocks and Weather Events Live Tracking and Forecast for
                     </H3>
-                    <H2 className="text-sidebar-primary">
+                    <H2 className="text-sidebar-primary text-2xl md:text-3xl lg:text-4xl">
                         Grow a Garden
                     </H2>
-
-                    {/* Last Update Indicator */}
-                    <div className="mt-4 text-sm text-gray-500">
-
-                    </div>
                 </div>
 
-                <div className="flex justify-between items-center w-full">
-                    <H4>
+                {/* Header with Refresh Button */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center w-full gap-4 px-4">
+                    <H4 className="text-lg md:text-xl">
                         Live Stocks and Weather Events
                     </H4>
                     {isLoading ? (
                         <div className="flex items-center gap-2">
                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                            <span>Updating data...</span>
+                            <span className="text-sm md:text-base">Updating data...</span>
                         </div>
                     ) : (
-                        <Button onClick={handleManualRefresh}>
-                            <RotateCcw/> Refresh
+                        <Button onClick={handleManualRefresh} size="sm" className="w-full sm:w-auto">
+                            <RotateCcw className="h-4 w-4 mr-2" /> Refresh
                         </Button>
                     )}
-
                 </div>
 
-                <div className="grid auto-rows-min gap-4 md:grid-cols-3 bg-transparent">
+                {/* Responsive Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 auto-rows-min gap-4 md:gap-6 bg-transparent px-4">
                     <StockCard
                         title="Seed Shop"
                         items={seedStock}
@@ -662,19 +843,523 @@ export default function GrowAGarden() {
                         isLoading={isLoading || fetchingShops.has('cosmetic')}
                     />
 
-                    {/* Weather Card */}
-                    <WeatherCard
-                        title="Current Weather"
-                        items={weatherEvents}
-                        isLoading={isLoading}
-                    />
+                    {/* Weather Card - spans full width on mobile, then normal */}
+                    <div className="sm:col-span-2 lg:col-span-1">
+                        <WeatherCard
+                            title="Current Weather"
+                            items={weatherEvents}
+                            isLoading={isLoading}
+                        />
+                    </div>
                 </div>
 
-                <H4 className="mt-20">
-                    Stocks and Weather Events Forecast
-                </H4>
-                <div className="relative min-h-[100vh] flex-1 overflow-hidden rounded-xl border border-sidebar-border/70 md:min-h-min dark:border-sidebar-border bg-transparent">
-                    <PlaceholderPattern className="absolute inset-0 size-full stroke-neutral-900/20 dark:stroke-neutral-100/20" />
+                {/* Forecast Section - WORKING VERSION */}
+                <div className="mt-8 md:mt-20 px-4">
+                    <H4 className="text-lg md:text-xl mb-4">
+                        Stocks and Weather Events Forecast
+                    </H4>
+                    <div className="relative min-h-[50vh] md:min-h-[60vh] flex flex-col gap-8 p-6 rounded-xl bg-background/20 border border-sidebar-border/70">
+
+                        {/* CATEGORY SELECTION */}
+                        <div>
+                            <label className="block text-lg font-semibold mb-3">Select Category</label>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                                {['seed', 'gear', 'event', 'egg', 'cosmetic', 'weather'].map((category) => (
+                                    <Button
+                                        key={category}
+                                        type="button"
+                                        variant={selectedCategory === category ? "default" : "outline"}
+                                        className={`flex flex-col items-center justify-center h-20 ${
+                                            selectedCategory === category
+                                                ? "bg-primary text-primary-foreground"
+                                                : "bg-primary/10 hover:bg-primary/20"
+                                        }`}
+                                        onClick={async () => {
+                                            setSelectedCategory(category);
+                                            setSelectedItem("");
+                                            setSelectedItemData(null);
+                                            setSelectedWeatherData(null);
+
+                                            try {
+                                                if (category === "weather") {
+                                                    // Weather always has stats
+                                                    const response = await fetch('/proxy/forecast/weather');
+                                                    if (response.ok) {
+                                                        const data = await response.json();
+                                                        setAvailableItems(data.map((weatherName: string) => ({
+                                                            value: weatherName,
+                                                            label: `${getWeatherIconFromName(weatherName)} ${weatherName.charAt(0).toUpperCase() + weatherName.slice(1)}`
+                                                        })));
+                                                    }
+                                                } else {
+                                                    // Get items with stats from the forecast API
+                                                    const response = await fetch(`/proxy/forecast/items-by-category/${category}`);
+
+                                                    if (response.ok) {
+                                                        const categoryItems = await response.json();
+                                                        console.log(`📊 ${category} items with stats:`, categoryItems);
+
+                                                        if (categoryItems.length > 0) {
+                                                            // Get current stock items for this category to find images
+                                                            let currentStockItems: StockItem[] = [];
+                                                            switch(category) {
+                                                                case 'seed': currentStockItems = seedStock; break;
+                                                                case 'gear': currentStockItems = gearStock; break;
+                                                                case 'event': currentStockItems = eventShopStock; break;
+                                                                case 'egg': currentStockItems = eggStock; break;
+                                                                case 'cosmetic': currentStockItems = cosmeticStock; break;
+                                                            }
+
+                                                            // Create a map of item names to their images
+                                                            const stockItemMap = new Map();
+                                                            currentStockItems.forEach(item => {
+                                                                stockItemMap.set(item.name.toLowerCase(), item.image);
+                                                            });
+
+                                                            // Create available items with their actual images/names
+                                                            const itemsWithData = categoryItems.map((item: any) => {
+                                                                const itemName = item.name || item.item || 'Unknown';
+                                                                const itemImage = stockItemMap.get(itemName.toLowerCase()) ||
+                                                                    `https://cdn.3itx.tech/image/GrowAGarden/${itemName.toLowerCase().replace(/\s+/g, '_')}`;
+
+                                                                // Return item data
+                                                                return {
+                                                                    value: itemName,
+                                                                    label: itemName,
+                                                                    image: itemImage
+                                                                };
+                                                            });
+
+                                                            setAvailableItems(itemsWithData);
+                                                        } else {
+                                                            setAvailableItems([]);
+                                                            console.log(`⚠️ No ${category} items found with historical stats`);
+                                                        }
+                                                    } else {
+                                                        setAvailableItems([]);
+                                                    }
+                                                }
+                                            } catch (error) {
+                                                console.error(`Error fetching ${category} items:`, error);
+                                                setAvailableItems([]);
+                                            }
+                                        }}
+                                    >
+                                        <span className="text-2xl mb-1">{getCategoryIcon(category)}</span>
+                                        <span className="text-xs font-medium">
+                            {category.charAt(0).toUpperCase() + category.slice(1)} {category === 'weather' ? '' : 'Shop'}
+                        </span>
+                                    </Button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* ITEM SELECTION */}
+                        {selectedCategory && (
+                            <div>
+                                <label className="block text-lg font-semibold mb-2">
+                                    Select {selectedCategory === "weather" ? "Weather" : "Item"}
+                                </label>
+                                <Select
+                                    value={selectedItem}
+                                    onValueChange={async (itemName) => {
+                                        console.log('🎯 Selected item:', itemName);
+                                        setSelectedItem(itemName);
+
+                                        if (selectedCategory && itemName) {
+                                            setIsLoadingForecast(true);
+                                            setSelectedItemData(null);
+                                            setSelectedWeatherData(null);
+
+                                            try {
+                                                if (selectedCategory === "weather") {
+                                                    const response = await fetch(`/proxy/forecast/weather-stats/${encodeURIComponent(itemName.toLowerCase())}`);
+                                                    if (response.ok) {
+                                                        const weatherData = await response.json();
+
+                                                        // Check if weather has actually appeared (count > 0)
+                                                        if (weatherData.count > 0) {
+                                                            const dateLabels = generateLast7Days();
+                                                            const forecastItem: ForecastItem = {
+                                                                name: weatherData.weather.charAt(0).toUpperCase() + weatherData.weather.slice(1),
+                                                                icon: getWeatherIconFromName(weatherData.weather),
+                                                                image: `https://cdn.3itx.tech/image/GrowAGarden/${weatherData.weather.toLowerCase()}`,
+                                                                lastSeen: weatherData.last_seen ? formatToPHTime(weatherData.last_seen) : 'Never',
+                                                                count: weatherData.count || 0,
+                                                                frequency: weatherData.frequency || 0, // Add this
+                                                                frequencyString: weatherData.frequency_string || 'Unknown frequency', // Add this
+                                                                shops: ['eventshop'],
+                                                                forecastData: (weatherData.appearances || Array(7).fill(0)).map((value: number, index: number) => ({
+                                                                    day: dateLabels[index] || `Day ${index + 1}`,
+                                                                    value: value
+                                                                }))
+                                                            };
+
+                                                            setSelectedWeatherData(forecastItem);
+                                                        } else {
+                                                            // Weather has never appeared
+                                                            setSelectedWeatherData(null);
+                                                        }
+                                                    }
+                                                } else {
+                                                    console.log(`📊 Searching stats for: "${itemName}"`);
+
+                                                    // Use /item-stats/{item} endpoint which searches in the array
+                                                    const response = await fetch(`/proxy/forecast/item-stats/${encodeURIComponent(itemName)}`);
+
+                                                    if (response.ok) {
+                                                        const itemData = await response.json();
+                                                        console.log('✅ Item stats found:', itemData);
+
+                                                        const dateLabels = generateLast7Days();
+                                                        const forecastItem: ForecastItem = {
+                                                            name: itemData.item || itemName,
+                                                            icon: getCategoryIcon(selectedCategory),
+                                                            image: `https://cdn.3itx.tech/image/GrowAGarden/${itemName.toLowerCase().replace(/\s+/g, '_')}`,
+                                                            lastSeen: formatToPHTime(itemData.last_seen),
+                                                            count: itemData.appearances?.reduce((sum: number, val: number) => sum + val, 0) || 0, // Total of appearances array
+                                                            frequency: itemData.frequency || 0, // The percentage (100)
+                                                            frequencyString: itemData.frequency_string || 'Unknown frequency', // "Appears every 4 hrs"
+                                                            shops: itemData.shops || [selectedCategory],
+                                                            forecastData: (itemData.appearances || Array(7).fill(0)).map((value: number, index: number) => ({
+                                                                day: dateLabels[index] || `Day ${index + 1}`,
+                                                                value: value
+                                                            }))
+                                                        };
+
+                                                        setSelectedItemData(forecastItem);
+                                                    } else {
+                                                        // Item not found or has no stats
+                                                        console.log(`❌ Item "${itemName}" has no historical data`);
+                                                        setSelectedItemData(null);
+                                                    }
+                                                }
+                                            } catch (error) {
+                                                console.error(`Error fetching stats:`, error);
+                                            } finally {
+                                                setIsLoadingForecast(false);
+                                            }
+                                        }
+                                    }}
+                                    disabled={availableItems.length === 0}
+                                >
+                                    <SelectTrigger className="w-full bg-background text-foreground border-primary/20">
+                                        <SelectValue
+                                            placeholder={
+                                                availableItems.length === 0
+                                                    ? `No ${selectedCategory === "weather" ? "weather" : "items"} available...`
+                                                    : `Select ${selectedCategory === "weather" ? "weather" : "item"}...`
+                                            }
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent className="bg-background border-primary/20 max-h-60">
+                                        {availableItems.map((item) => (
+                                            <SelectItem key={item.value} value={item.value}>
+                                                <div className="flex items-center gap-2">
+                                                    {/* Display item image if available */}
+                                                    {(item as any).image ? (
+                                                        <img
+                                                            src={(item as any).image}
+                                                            alt={item.label}
+                                                            className="w-6 h-6 rounded object-cover"
+                                                            onError={(e) => {
+                                                                // Fallback if image fails to load
+                                                                e.currentTarget.style.display = 'none';
+                                                            }}
+                                                        />
+                                                    ) : null}
+                                                    <span>{item.label}</span>
+                                                </div>
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
+
+                        {/* LOADING STATE */}
+                        {isLoadingForecast && (
+                            <div className="flex flex-col items-center justify-center h-96 rounded-lg bg-background/10">
+                                <div className="text-center py-8">
+                                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+                                    <p className="text-lg font-semibold mb-2 text-muted-foreground">Loading forecast data...</p>
+                                    <p className="text-gray-500 text-center max-w-md">
+                                        {selectedCategory === 'weather' ? 'Fetching weather patterns...' : 'Analyzing item appearance history...'}
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* FORECAST DISPLAY - Shows only when data is available from API */}
+                        {(selectedItemData || selectedWeatherData) && !isLoadingForecast ? (
+                            <div className="flex justify-center">
+                                <div className="w-full max-w-4xl">
+                                    {selectedItemData ? (
+                                        <Card className="bg-background/20 border-primary/20">
+                                            <CardHeader className="text-center pb-6">
+                                                <div className="flex flex-col items-center gap-4">
+                                                    <div className="w-20 h-20 rounded-lg overflow-hidden bg-primary/20 flex items-center justify-center">
+                                                        {selectedItemData.image ? (
+                                                            <img
+                                                                src={selectedItemData.image}
+                                                                alt={selectedItemData.name}
+                                                                className="w-full h-full object-cover"
+                                                                onError={(e) => {
+                                                                    // If image fails, show icon
+                                                                    e.currentTarget.style.display = 'none';
+                                                                    const iconSpan = document.createElement('span');
+                                                                    iconSpan.className = 'text-4xl';
+                                                                    iconSpan.textContent = selectedItemData.icon;
+                                                                    e.currentTarget.parentElement?.appendChild(iconSpan);
+                                                                }}
+                                                            />
+                                                        ) : (
+                                                            <span className="text-4xl">{selectedItemData.icon}</span>
+                                                        )}
+                                                    </div>
+                                                    <div>
+                                                        <CardTitle className="text-xl">
+                                                            {selectedItemData.name}
+                                                        </CardTitle>
+                                                        <CardDescription className="mt-2">
+                                    <span className="text-sm bg-primary/20 px-2 py-1 rounded ml-2">
+                                        {selectedCategory?.charAt(0).toUpperCase() + selectedCategory?.slice(1)} Shop
+                                    </span>
+                                                        </CardDescription>
+                                                    </div>
+                                                </div>
+                                            </CardHeader>
+
+                                            <CardContent>
+                                                {/* CHANGED: Updated grid to have 4 columns */}
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+                                                    {/* Box 1: Last Seen - UPDATED with text-primary */}
+                                                    <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                                        <p className="text-xs text-muted-foreground">Last Seen</p>
+                                                        <p className="text-base font-semibold text-primary">{selectedItemData.lastSeen}</p>
+                                                    </div>
+
+                                                    {/* Box 2: Appearance Count */}
+                                                    <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                                        <p className="text-xs text-muted-foreground">Appearance Count</p>
+                                                        <p className="text-xl font-bold text-primary">x{selectedItemData.count}</p>
+                                                    </div>
+
+                                                    {/* Box 3: Appearance Rate */}
+                                                    <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                                        <p className="text-xs text-muted-foreground">Appearance Rate</p>
+                                                        <p className="text-xl font-bold text-primary">{selectedItemData.frequency}%</p>
+                                                    </div>
+
+                                                    {/* Box 4: NEW - Frequency String */}
+                                                    <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                                        <p className="text-xs text-muted-foreground">Frequency</p>
+                                                        <p className="text-base font-semibold text-primary">
+                                                            {selectedItemData.frequencyString}
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <h4 className="text-lg font-semibold mb-4 text-center">7-Day Appearance History</h4>
+                                                    <div className="h-64 min-h-[256px]">
+                                                        <ChartContainer
+                                                            config={{
+                                                                value: {
+                                                                    label: "Appearances",
+                                                                    color: "hsl(var(--primary))",
+                                                                },
+                                                            }}
+                                                            className="h-full w-full"
+                                                        >
+                                                            <BarChart data={selectedItemData.forecastData}>
+                                                                <ChartXAxis
+                                                                    dataKey="day"
+                                                                    stroke="hsl(var(--muted-foreground))"
+                                                                    axisLine={false}
+                                                                    tickLine={false}
+                                                                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                                                                />
+                                                                <ChartYAxis
+                                                                    stroke="hsl(var(--muted-foreground))"
+                                                                    axisLine={false}
+                                                                    tickLine={false}
+                                                                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                                                                />
+                                                                <ChartTooltip
+                                                                    content={
+                                                                        <ChartTooltipContent
+                                                                            labelFormatter={(value: string) => value}
+                                                                            formatter={(value: unknown) => {
+                                                                                // Handle both number and string values
+                                                                                const numValue = typeof value === 'number' ? value :
+                                                                                    typeof value === 'string' ? parseFloat(value) : 0;
+                                                                                return [`x${numValue}`, ' Appearances'] as [string, string];
+                                                                            }}
+                                                                        />
+                                                                    }
+                                                                />
+                                                                <ChartBar
+                                                                    dataKey="value"
+                                                                    fill="var(--color-value)"
+                                                                    radius={[4, 4, 0, 0]}
+                                                                    className="transition-all hover:opacity-80"
+                                                                />
+                                                            </BarChart>
+                                                        </ChartContainer>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                            <CardFooter className="flex justify-center pt-6">
+                                                <Button
+                                                    onClick={() => alert(`Predicting forecast for ${selectedItemData.name}...`)}
+                                                    className="w-full max-w-md"
+                                                    variant="default"
+                                                >
+                                                    Predict Future Trends
+                                                </Button>
+                                            </CardFooter>
+                                        </Card>
+                                    ) : selectedWeatherData ? (
+                                        <Card className="bg-background/20 border-primary/20">
+                                            <CardHeader className="text-center pb-6">
+                                                <div className="flex flex-col items-center gap-4">
+                                                    <div className="w-20 h-20 rounded-lg overflow-hidden bg-primary/20 flex items-center justify-center">
+                                                        {selectedWeatherData.image ? (
+                                                            <img
+                                                                src={selectedWeatherData.image}
+                                                                alt={selectedWeatherData.name}
+                                                                className="w-full h-full object-cover"
+                                                                onError={(e) => {
+                                                                    // If image fails, show icon
+                                                                    e.currentTarget.style.display = 'none';
+                                                                    const iconSpan = document.createElement('span');
+                                                                    iconSpan.className = 'text-4xl';
+                                                                    iconSpan.textContent = selectedWeatherData.icon;
+                                                                    e.currentTarget.parentElement?.appendChild(iconSpan);
+                                                                }}
+                                                            />
+                                                        ) : (
+                                                            <span className="text-4xl">{selectedWeatherData.icon}</span>
+                                                        )}
+                                                    </div>
+                                                    <CardTitle className="text-xl">
+                                                        {selectedWeatherData.name}
+                                                    </CardTitle>
+                                                </div>
+                                            </CardHeader>
+
+                                            <CardContent>
+                                                {/* CHANGED: Updated grid to have 4 columns */}
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+                                                    {/* Box 1: Last Seen */}
+                                                    <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                                        <p className="text-xs text-muted-foreground">Last Seen</p>
+                                                        <p className="text-base font-semibold text-primary">{selectedWeatherData.lastSeen}</p>
+                                                    </div>
+
+                                                    {/* Box 2: Total Occurrences */}
+                                                    <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                                        <p className="text-xs text-muted-foreground">Total Occurrences</p>
+                                                        <p className="text-xl font-bold text-primary">x{selectedWeatherData.count}</p>
+                                                    </div>
+
+                                                    {/* Box 3: Occurrence Rate */}
+                                                    <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                                        <p className="text-xs text-muted-foreground">Occurrence Rate</p>
+                                                        <p className="text-xl font-bold text-primary">{selectedWeatherData.frequency}%</p>
+                                                    </div>
+
+                                                    {/* Box 4: NEW - Frequency String */}
+                                                    <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                                        <p className="text-xs text-muted-foreground">Frequency</p>
+                                                        <p className="text-base font-semibold text-primary">
+                                                            {selectedWeatherData.frequencyString}
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <h4 className="text-lg font-semibold mb-4 text-center">7-Day Weather History</h4>
+                                                    <div className="h-64 min-h-[256px]">
+                                                        <ChartContainer
+                                                            config={{
+                                                                value: {
+                                                                    label: "Occurrences",
+                                                                    color: "hsl(var(--primary))",
+                                                                },
+                                                            }}
+                                                            className="h-full w-full"
+                                                        >
+                                                            <BarChart data={selectedWeatherData.forecastData}>
+                                                                <ChartXAxis
+                                                                    dataKey="day"
+                                                                    stroke="hsl(var(--muted-foreground))"
+                                                                    axisLine={false}
+                                                                    tickLine={false}
+                                                                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                                                                />
+                                                                <ChartYAxis
+                                                                    stroke="hsl(var(--muted-foreground))"
+                                                                    axisLine={false}
+                                                                    tickLine={false}
+                                                                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                                                                />
+                                                                <ChartTooltip
+                                                                    content={
+                                                                        <ChartTooltipContent
+                                                                            labelFormatter={(value: string) => value}
+                                                                            formatter={(value: unknown) => {
+                                                                                // Handle both number and string values
+                                                                                const numValue = typeof value === 'number' ? value :
+                                                                                    typeof value === 'string' ? parseFloat(value) : 0;
+                                                                                return [`x${numValue}`, ' Occurrences'] as [string, string];
+                                                                            }}
+                                                                        />
+                                                                    }
+                                                                />
+                                                                <ChartBar
+                                                                    dataKey="value"
+                                                                    fill="var(--color-value)"
+                                                                    radius={[4, 4, 0, 0]}
+                                                                    className="transition-all hover:opacity-80"
+                                                                />
+                                                            </BarChart>
+                                                        </ChartContainer>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+
+                                            <CardFooter className="flex justify-center pt-6">
+                                                <Button
+                                                    onClick={() => alert(`Predicting weather forecast for ${selectedWeatherData.name}...`)}
+                                                    className="w-full max-w-md"
+                                                    variant="default"
+                                                >
+                                                    Predict Weather Patterns
+                                                </Button>
+                                            </CardFooter>
+                                        </Card>
+                                    ) : null}
+                                </div>
+                            </div>
+                        ) :null}
+
+
+                        {/* PLACEHOLDER WHEN NOTHING SELECTED */}
+                        {!selectedItemData && !selectedWeatherData && !isLoadingForecast && !selectedItem && availableItems.length > 0 && (
+                            <div className="flex flex-col items-center justify-center h-96 rounded-lg bg-background/10">
+                                <div className="text-center py-8">
+                                    <div className="text-4xl mb-4 opacity-30">📈</div>
+                                    <p className="text-lg font-semibold mb-2 text-muted-foreground">Select an item to view forecast</p>
+                                    <p className="text-gray-500 text-center max-w-md">
+                                        Choose an item from the dropdown above to see its historical appearance patterns
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                    </div>
                 </div>
             </div>
         </AppLayout>

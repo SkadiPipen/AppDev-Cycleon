@@ -18,11 +18,11 @@ import React from "react";
 
 export interface StockItem {
     name: string;
-    Stock?: number;     // ← Make optional
-    stock?: number;     // ← Add lowercase version
-    quantity?: number;  // ← Add quantity field
+    Stock?: number;
+    stock?: number;
+    quantity?: number;
     Emoji?: string;
-    image?: string;     // ← Make optional
+    image?: string;
     Tier?: string;
     Set?: string;
 }
@@ -168,12 +168,13 @@ export default function StockCard({
 
                                 return (
                                     <Item variant="muted" key={i} className="bg-primary/10 hover:bg-primary/20">
-                                        <ItemMedia variant="image" className="relative">
-                                            <div className="relative">
+                                        {/* CENTERED IMAGE */}
+                                        <div className="flex items-center justify-center min-w-[3rem]">
+                                            <div className="relative w-12 h-12">
                                                 <img
                                                     src={imageUrl}
                                                     alt={item.name}
-                                                    className="rounded-md w-12 h-12 object-cover"
+                                                    className="rounded-md w-full h-full object-cover"
                                                     onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
                                                         handleImageError(e, item.name);
                                                     }}
@@ -181,7 +182,7 @@ export default function StockCard({
                                                 />
                                                 {/* Fallback */}
                                                 <div
-                                                    className="rounded-md w-12 h-12 bg-primary/20 flex items-center justify-center absolute inset-0 hidden"
+                                                    className="rounded-md w-full h-full bg-primary/20 flex items-center justify-center absolute inset-0 hidden"
                                                     id={`fallback-${i}`}
                                                 >
                                                     <span className="font-bold text-sm">
@@ -189,7 +190,7 @@ export default function StockCard({
                                                     </span>
                                                 </div>
                                             </div>
-                                        </ItemMedia>
+                                        </div>
 
                                         <ItemContent>
                                             <ItemTitle className="truncate">{item.name}</ItemTitle>
@@ -201,13 +202,11 @@ export default function StockCard({
                                             )}
                                         </ItemContent>
 
+                                        {/* CHANGED: "x3" format instead of "3 in stock" */}
                                         <ItemContent className="text-right">
                                             <div className="text-xl font-bold">
-                                                {stockCount}
+                                                x{stockCount}
                                             </div>
-                                            <ItemDescription className="text-xs">
-                                                in stock
-                                            </ItemDescription>
                                         </ItemContent>
                                     </Item>
                                 );

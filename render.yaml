@@ -14,7 +14,7 @@ services:
       - key: APP_KEY
         generateValue: true
       - key: VITE_APP_NAME
-        value: "My Laravel App"
+        value: "Cycleon"
     buildCommand: ""
     startCommand: ""
     healthCheckPath: /health
