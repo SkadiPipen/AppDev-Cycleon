@@ -350,6 +350,22 @@ export default function GrowAGarden() {
     const fetchTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
     const hasFetchedOnRestockRef = useRef<Record<string, boolean>>({});
 
+    const calculateRestockTimes = (intervalMinutes: number) => {
+        const now = new Date();
+        const intervalMs = intervalMinutes * 60 * 1000;
+        const midnight = new Date(now);
+        midnight.setHours(0, 0, 0, 0);
+        const timeSinceMidnight = now.getTime() - midnight.getTime();
+        const intervalsSinceMidnight = Math.floor(timeSinceMidnight / intervalMs);
+        const lastRestockTime = new Date(midnight.getTime() + (intervalsSinceMidnight * intervalMs));
+        const nextRestockTime = new Date(lastRestockTime.getTime() + intervalMs);
+
+        return {
+            lastRestock: lastRestockTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            nextRestock: nextRestockTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+    };
+
     const fetchPredictions = async (): Promise<void> => {
         if (!selectedCategory || !selectedItem) {
             console.error('Cannot fetch predictions: missing category or item');
@@ -363,53 +379,196 @@ export default function GrowAGarden() {
             let endpoint = '';
             let response: ItemPredictionResponse | WeatherPredictionResponse | null = null;
 
-            console.log(`🔮 Fetching predictions for ${selectedCategory}: ${selectedItem}`);
+            console.log(`🔮 Fetching predictions for ${selectedCategory}: "${selectedItem}"`);
 
             if (selectedCategory === 'weather') {
-                // ... weather code remains the same ...
-            } else {
-                // For items: Use the item name as-is (with spaces)
-                const endpoint = `/proxy/predict/items/${encodeURIComponent(selectedItem)}`;
-                console.log(`🔗 Calling item endpoint: ${endpoint}`);
+                // WEATHER PREDICTION - with multiple format attempts
+                console.log(`🌤️ Starting weather prediction for: ${selectedItem}`);
 
-                const res = await fetch(endpoint);
+                // Try different weather name formats
+                const weatherFormats = [
+                    // Original formats
+                    selectedItem,
+                    selectedItem.toLowerCase(),
+                    // Snake case variations
+                    selectedItem.toLowerCase().replace(/\s+/g, '_'),
+                    selectedItem.replace(/\s+/g, '_'),
+                    // Kebab case
+                    selectedItem.toLowerCase().replace(/\s+/g, '-'),
+                    // No spaces
+                    selectedItem.toLowerCase().replace(/\s+/g, ''),
+                    // Capitalized
+                    selectedItem.split(' ').map(word =>
+                        word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                    ).join('_'),
+                ];
 
-                if (!res.ok) {
-                    const errorData = await res.json();
-                    throw new Error(errorData.error || errorData.detail || `HTTP ${res.status}`);
+                // Remove duplicates
+                const uniqueFormats = [...new Set(weatherFormats)];
+                console.log('🔄 Weather formats to try:', uniqueFormats);
+
+                let lastError: string | null = null;
+                let success = false;
+
+                for (const format of uniqueFormats) {
+                    try {
+                        endpoint = `/proxy/predict/weather/${encodeURIComponent(format)}`;
+                        console.log(`🌤️ Trying weather endpoint: ${endpoint}`);
+
+                        const res = await fetch(endpoint);
+
+                        if (res.ok) {
+                            response = await res.json() as WeatherPredictionResponse;
+                            console.log(`✅ Weather format "${format}" succeeded!`);
+                            console.log('📊 Weather response:', response);
+                            success = true;
+                            break;
+                        } else {
+                            const errorText = await res.text();
+                            console.log(`❌ Weather format "${format}" failed: HTTP ${res.status} - ${errorText}`);
+                            lastError = `HTTP ${res.status}: ${errorText}`;
+
+                            // Try to parse as JSON for more details
+                            try {
+                                const errorData = JSON.parse(errorText);
+                                lastError = errorData.detail || errorData.error || lastError;
+                            } catch (e) {
+                                // Not JSON, use text as is
+                            }
+                        }
+                    } catch (error) {
+                        console.log(`❌ Weather format "${format}" error:`, error);
+                        lastError = error instanceof Error ? error.message : 'Unknown error';
+                    }
                 }
 
-                response = await res.json() as ItemPredictionResponse;
+                if (!success || !response) {
+                    throw new Error(`Weather prediction failed: ${lastError || 'All formats failed'}`);
+                }
 
-                // FIX: Check if response exists
+                // Check if response exists
+                if (!response) {
+                    throw new Error('No response received from weather prediction API');
+                }
+
+                // Type guard for error
+                if ('error' in response && response.error) {
+                    throw new Error(`Weather prediction error: ${response.error}`);
+                }
+
+                // Type narrowing
+                const weatherResponse = response as WeatherPredictionResponse;
+
+                // DEBUG logging
+                console.log('🌤️ Weather API Response:', weatherResponse);
+                console.log('🌤️ Next occurrences:', weatherResponse.next_occurrences);
+                console.log('🌤️ Time window probabilities:', weatherResponse.time_window_probabilities);
+                console.log('🌤️ Confidence windows:', weatherResponse.confidence_windows);
+
+                const mainOccurrence = weatherResponse.next_occurrences?.[0];
+                if (!mainOccurrence) {
+                    throw new Error('No prediction data available for this weather');
+                }
+
+                const transformedData: PredictionData = {
+                    type: 'weather',
+                    name: weatherResponse.weather.charAt(0).toUpperCase() + weatherResponse.weather.slice(1),
+                    category: 'weather',
+                    predictionMode: weatherResponse.prediction_mode,
+                    nextRestockProbability: mainOccurrence.confidence,
+                    nextRestockTime: convertUTCtoPHTime(mainOccurrence.predicted_time),
+                    probabilityOverTime: (weatherResponse.time_window_probabilities || []).map((window) => ({
+                        time: convertUTCtoPHTime(window.predicted_time),
+                        probability: window.probability,
+                        label: `${window.minutes} mins`
+                    })),
+                    confidenceIntervals: (weatherResponse.confidence_windows || []).map(window => ({
+                        confidence: window.confidence_level,
+                        predictedTime: window.predicted_time ? convertUTCtoPHTime(window.predicted_time) :
+                            formatMinutesFromNow(window.minutes || 0),
+                        label: `${window.minutes} mins`
+                    }))
+                };
+
+                console.log('✅ Transformed weather prediction data:', transformedData);
+                setPredictionData(transformedData);
+
+            } else {
+                // ITEM PREDICTION
+                console.log(`📦 Starting item prediction for: ${selectedItem}`);
+
+                // Try different item name formats
+                const itemFormats = [
+                    selectedItem, // Original with spaces
+                    selectedItem.replace(/\s+/g, '_'), // With underscores
+                    selectedItem.replace(/\s+/g, '-'), // With hyphens
+                    selectedItem.toLowerCase().replace(/\s+/g, '_'), // Lowercase with underscores
+                    selectedItem.toLowerCase(), // Lowercase with spaces
+                ];
+
+                const uniqueItemFormats = [...new Set(itemFormats)];
+                console.log('🔄 Item formats to try:', uniqueItemFormats);
+
+                let lastItemError: string | null = null;
+                let itemSuccess = false;
+
+                for (const format of uniqueItemFormats) {
+                    try {
+                        endpoint = `/proxy/predict/items/${encodeURIComponent(format)}`;
+                        console.log(`📦 Trying item endpoint: ${endpoint}`);
+
+                        const res = await fetch(endpoint);
+
+                        if (res.ok) {
+                            response = await res.json() as ItemPredictionResponse;
+                            console.log(`✅ Item format "${format}" succeeded!`);
+                            itemSuccess = true;
+                            break;
+                        } else {
+                            const errorText = await res.text();
+                            console.log(`❌ Item format "${format}" failed: HTTP ${res.status} - ${errorText}`);
+                            lastItemError = `HTTP ${res.status}: ${errorText}`;
+
+                            try {
+                                const errorData = JSON.parse(errorText);
+                                lastItemError = errorData.detail || errorData.error || lastItemError;
+                            } catch (e) {
+                                // Not JSON
+                            }
+                        }
+                    } catch (error) {
+                        console.log(`❌ Item format "${format}" error:`, error);
+                        lastItemError = error instanceof Error ? error.message : 'Unknown error';
+                    }
+                }
+
+                if (!itemSuccess || !response) {
+                    throw new Error(`Item prediction failed: ${lastItemError || 'All formats failed'}`);
+                }
+
+                // Check if response exists
                 if (!response) {
                     throw new Error('No response received from item prediction API');
                 }
 
-                // FIX: Type guard for error
+                // Type guard for error
                 if ('error' in response && response.error) {
                     throw new Error(`Item prediction error: ${response.error}`);
                 }
 
-                // FIX: Type narrowing
+                // Type narrowing
                 const itemResponse = response as ItemPredictionResponse;
                 const shopInterval = getShopInterval(selectedCategory);
+
+                // DEBUG logging
+                console.log('📦 Item API Response:', itemResponse);
+                console.log('📦 Next occurrences:', itemResponse.next_occurrences);
+                console.log('📦 Cycle probabilities:', itemResponse.cycle_probabilities);
+                console.log('📦 Confidence windows:', itemResponse.confidence_windows);
+
                 const mainOccurrence = itemResponse.next_occurrences?.[0];
-
                 if (!mainOccurrence) {
-                    throw new Error('No prediction data available');
-                }
-
-                // DEBUG: Log what data we're getting
-                console.log('📊 Raw API response:', itemResponse);
-                console.log('📊 Confidence windows:', itemResponse.confidence_windows);
-                console.log('📊 Confidence windows length:', itemResponse.confidence_windows?.length);
-                console.log('📊 Confidence windows data:', itemResponse.confidence_windows);
-
-                if (itemResponse.confidence_windows && itemResponse.confidence_windows.length > 0) {
-                    console.log('📊 First confidence window:', itemResponse.confidence_windows[0]);
-                    console.log('📊 Confidence level:', itemResponse.confidence_windows[0].confidence_level);
-                    console.log('📊 Cycles:', itemResponse.confidence_windows[0].cycles);
+                    throw new Error('No prediction data available for this item');
                 }
 
                 const transformedData: PredictionData = {
@@ -425,41 +584,39 @@ export default function GrowAGarden() {
                         label: `Cycle ${cycle.cycle}`
                     })),
                     confidenceIntervals: (itemResponse.confidence_windows || []).map(window => {
-                        // DEBUG: Log each window transformation
-                        console.log('🔄 Transforming confidence window:', window);
-
                         const cycles = window.cycles || 1;
-                        const predictedTime = formatMinutesFromNow(cycles * shopInterval);
-                        const label = `${cycles} cycle${cycles !== 1 ? 's' : ''}`;
-
-                        console.log(`🔄 Result: ${window.confidence_level}% -> ${predictedTime} (${label})`);
-
                         return {
                             confidence: window.confidence_level,
-                            predictedTime: predictedTime,
-                            label: label
+                            predictedTime: formatMinutesFromNow(cycles * shopInterval),
+                            label: `${cycles} cycle${cycles !== 1 ? 's' : ''}`
                         };
                     })
                 };
 
-                // DEBUG: Log the final transformed data
-                console.log('✅ Transformed prediction data:', transformedData);
-                console.log('✅ Confidence intervals count:', transformedData.confidenceIntervals.length);
-
-                if (transformedData.confidenceIntervals.length === 0) {
-                    console.log('⚠️ No confidence intervals were created!');
-                } else {
-                    console.log('✅ Confidence intervals:', transformedData.confidenceIntervals);
-                }
-
+                console.log('✅ Transformed item prediction data:', transformedData);
                 setPredictionData(transformedData);
             }
 
             setShowPredictions(true);
-            console.log('✅ Predictions loaded successfully');
+            console.log('✅ Predictions loaded successfully!');
 
         } catch (error) {
-            console.error('Failed to fetch predictions:', error);
+            console.error('❌ Failed to fetch predictions:', error);
+
+            // Create user-friendly error message
+            let errorMessage = 'Unknown error occurred';
+            if (error instanceof Error) {
+                errorMessage = error.message;
+
+                // Make common errors more user-friendly
+                if (errorMessage.includes('404')) {
+                    errorMessage = `"${selectedItem}" not found in prediction database. This item/weather may not have enough historical data.`;
+                } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+                    errorMessage = 'Unable to connect to prediction service. Please check your internet connection.';
+                } else if (errorMessage.includes('No prediction data available')) {
+                    errorMessage = `No prediction data available for "${selectedItem}". Try a different item.`;
+                }
+            }
 
             setPredictionData({
                 type: selectedCategory === 'weather' ? 'weather' : 'item',
@@ -470,29 +627,13 @@ export default function GrowAGarden() {
                 nextRestockTime: 'Unknown',
                 probabilityOverTime: [],
                 confidenceIntervals: [],
-                error: error instanceof Error ? error.message : 'Unknown error'
+                error: errorMessage
             });
 
             setShowPredictions(true);
         } finally {
             setIsLoadingPrediction(false);
         }
-    };
-
-    const calculateRestockTimes = (intervalMinutes: number) => {
-        const now = new Date();
-        const intervalMs = intervalMinutes * 60 * 1000;
-        const midnight = new Date(now);
-        midnight.setHours(0, 0, 0, 0);
-        const timeSinceMidnight = now.getTime() - midnight.getTime();
-        const intervalsSinceMidnight = Math.floor(timeSinceMidnight / intervalMs);
-        const lastRestockTime = new Date(midnight.getTime() + (intervalsSinceMidnight * intervalMs));
-        const nextRestockTime = new Date(lastRestockTime.getTime() + intervalMs);
-
-        return {
-            lastRestock: lastRestockTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            nextRestock: nextRestockTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        };
     };
 
     const seedRestock = calculateRestockTimes(5);

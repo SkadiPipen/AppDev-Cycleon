@@ -19,30 +19,119 @@ class PredictController extends Controller
     public function predictItem(string $item): JsonResponse
     {
         try {
-            Log::info('🔮 [PREDICT START] Item parameter: ' . $item);
+            Log::info('🔮 [ITEM PREDICT] Starting prediction for: ' . $item);
 
-            $baseUrl = 'https://cycleonapi-production.up.railway.app';
+            $baseUrl = $this->getBaseUrl();
             $decodedItem = urldecode($item);
 
             Log::info('🔍 Decoded item: ' . $decodedItem);
 
-            // Try different encoding methods
-            $encodingMethods = [
-                'rawurlencode' => rawurlencode($decodedItem),  // Use %20 for spaces
-                'urlencode' => urlencode($decodedItem),        // Use + for spaces (what we were using)
-                'str_replace' => str_replace(' ', '%20', $decodedItem), // Manual %20
-                'no_encode' => $decodedItem,                   // No encoding at all
+            // The API seems to expect items with %20 encoding (not +)
+            $itemForApi = $decodedItem;
+            $apiUrl = $baseUrl . '/predict/items/' . rawurlencode($itemForApi);
+
+            Log::info('🔗 External API URL: ' . $apiUrl);
+
+            $response = Http::withOptions([
+                'timeout' => 30,
+                'connect_timeout' => 10,
+                'verify' => false,
+            ])->get($apiUrl);
+
+            Log::info('📊 External API Response Status: ' . $response->status());
+
+            if ($response->successful()) {
+                $predictionData = $response->json();
+                Log::info('✅ Item prediction successful', [
+                    'item' => $itemForApi,
+                    'has_confidence_windows' => isset($predictionData['confidence_windows']),
+                    'confidence_windows_count' => isset($predictionData['confidence_windows']) ? count($predictionData['confidence_windows']) : 0,
+                ]);
+
+                // Ensure all arrays exist
+                $predictionData['next_occurrences'] = $predictionData['next_occurrences'] ?? [];
+                $predictionData['cycle_probabilities'] = $predictionData['cycle_probabilities'] ?? [];
+                $predictionData['confidence_windows'] = $predictionData['confidence_windows'] ?? [];
+
+                return response()->json($predictionData);
+            }
+
+            // Handle 404 - item not found
+            if ($response->status() === 404) {
+                $errorBody = $response->json();
+                $errorMessage = $errorBody['detail'] ?? 'Item not found in prediction database';
+
+                Log::warning('⚠️ Item not found in API', [
+                    'item' => $itemForApi,
+                    'error' => $errorMessage
+                ]);
+
+                return response()->json([
+                    'item' => $itemForApi,
+                    'prediction_mode' => 'error',
+                    'next_occurrences' => [],
+                    'cycle_probabilities' => [],
+                    'confidence_windows' => [],
+                    'error' => $errorMessage
+                ], 404);
+            }
+
+            // Handle other errors
+            Log::warning('⚠️ Item prediction API error', [
+                'status' => $response->status(),
+                'item' => $itemForApi,
+                'response' => $response->body()
+            ]);
+
+            return response()->json([
+                'item' => $itemForApi,
+                'prediction_mode' => 'error',
+                'next_occurrences' => [],
+                'cycle_probabilities' => [],
+                'confidence_windows' => [],
+                'error' => 'Prediction API returned status: ' . $response->status()
+            ], $response->status());
+
+        } catch (\Exception $e) {
+            Log::error('❌ Item prediction failed: ' . $e->getMessage());
+
+            return response()->json([
+                'item' => $item ?? 'unknown',
+                'prediction_mode' => 'error',
+                'next_occurrences' => [],
+                'cycle_probabilities' => [],
+                'confidence_windows' => [],
+                'error' => 'Connection failed: ' . $e->getMessage()
+            ], 503);
+        }
+    }
+
+    public function predictWeather(string $weather): JsonResponse
+    {
+        try {
+            Log::info('🌤️ [WEATHER PREDICT] Starting prediction for: ' . $weather);
+
+            $baseUrl = $this->getBaseUrl();
+            $decodedWeather = urldecode($weather);
+
+            Log::info('🔍 Decoded weather: ' . $decodedWeather);
+
+            // Try different formats - API might expect lowercase with underscores
+            $weatherFormats = [
+                strtolower($decodedWeather),
+                str_replace(' ', '_', strtolower($decodedWeather)),
+                $decodedWeather, // Original
             ];
 
-            Log::info('🔄 Encoding methods:', $encodingMethods);
+            $uniqueFormats = array_unique($weatherFormats);
 
             $lastError = null;
             $lastResponse = null;
 
-            foreach ($encodingMethods as $methodName => $encodedItem) {
+            foreach ($uniqueFormats as $weatherForApi) {
                 try {
-                    $apiUrl = $baseUrl . '/predict/items/' . $encodedItem;
-                    Log::info("🔄 Trying encoding '$methodName': $apiUrl");
+                    $apiUrl = $baseUrl . '/predict/weather/' . rawurlencode($weatherForApi);
+                    Log::info('🔄 Trying weather format: ' . $apiUrl);
 
                     $response = Http::withOptions([
                         'timeout' => 15,
@@ -50,19 +139,17 @@ class PredictController extends Controller
                         'verify' => false,
                     ])->get($apiUrl);
 
-                    Log::info("📊 Response status for '$methodName': " . $response->status());
-
                     if ($response->successful()) {
-                        Log::info("✅ Success with encoding '$methodName'");
                         $predictionData = $response->json();
+                        Log::info('✅ Weather prediction successful', [
+                            'weather' => $weatherForApi,
+                            'format_used' => $weatherForApi
+                        ]);
 
-                        // Add debug info
-                        $predictionData['_debug'] = [
-                            'original_item' => $item,
-                            'successful_encoding' => $methodName,
-                            'encoded_item_sent' => $encodedItem,
-                            'api_url_used' => $apiUrl
-                        ];
+                        // Ensure all arrays exist
+                        $predictionData['next_occurrences'] = $predictionData['next_occurrences'] ?? [];
+                        $predictionData['time_window_probabilities'] = $predictionData['time_window_probabilities'] ?? [];
+                        $predictionData['confidence_windows'] = $predictionData['confidence_windows'] ?? [];
 
                         return response()->json($predictionData);
                     }
@@ -71,83 +158,35 @@ class PredictController extends Controller
                     $lastError = $errorBody['detail'] ?? 'HTTP ' . $response->status();
                     $lastResponse = $response->body();
 
-                    Log::warning("⚠️ Encoding '$methodName' failed: " . $lastError);
+                    Log::warning('⚠️ Weather format failed: ' . $weatherForApi, [
+                        'status' => $response->status(),
+                        'error' => $lastError
+                    ]);
 
                 } catch (\Exception $e) {
-                    Log::warning("⚠️ Encoding '$methodName' error: " . $e->getMessage());
+                    Log::warning('⚠️ Weather format error: ' . $e->getMessage());
                     $lastError = $e->getMessage();
                 }
             }
 
-            // If all encoding methods failed
-            Log::error('❌ All encoding methods failed for: ' . $decodedItem);
+            // All formats failed
+            Log::error('❌ All weather formats failed for: ' . $decodedWeather);
 
             return response()->json([
-                'item' => $decodedItem,
-                'prediction_mode' => 'error',
-                'next_occurrences' => [],
-                'cycle_probabilities' => [],
-                'confidence_windows' => [],
-                'error' => 'Item not found in prediction database: ' . ($lastError ?? 'Unknown error'),
-                'debug' => [
-                    'original_item' => $item,
-                    'decoded_item' => $decodedItem,
-                    'tried_encodings' => $encodingMethods,
-                    'last_response' => $lastResponse
-                ]
-            ], 404);
-
-        } catch (\Exception $e) {
-            Log::error('❌ Predict controller error: ' . $e->getMessage());
-
-            return response()->json([
-                'item' => $item ?? 'unknown',
-                'prediction_mode' => 'error',
-                'next_occurrences' => [],
-                'cycle_probabilities' => [],
-                'confidence_windows' => [],
-                'error' => 'Server error: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    public function predictWeather(string $weather): JsonResponse
-    {
-        try {
-            Log::info('🌤️ Fetching weather prediction: ' . $weather);
-
-            $response = Http::withOptions([
-                'timeout' => 30,
-                'connect_timeout' => 10,
-                'verify' => false,
-            ])->get($this->getBaseUrl() . '/predict/weather/' . urlencode(strtolower($weather)));
-
-            if ($response->successful()) {
-                $predictionData = $response->json();
-                Log::info('✅ Weather prediction received', ['weather' => $weather]);
-
-                return response()->json($predictionData);
-            }
-
-            Log::warning('⚠️ Weather prediction API failed', [
-                'status' => $response->status(),
-                'response' => $response->body()
-            ]);
-
-            return response()->json([
-                'weather' => $weather,
+                'weather' => $decodedWeather,
                 'prediction_mode' => 'error',
                 'next_occurrences' => [],
                 'time_window_probabilities' => [],
                 'confidence_windows' => [],
-                'error' => 'API returned status: ' . $response->status()
-            ], $response->status());
+                'error' => 'Weather prediction failed: ' . ($lastError ?? 'Unknown error'),
+                'suggestion' => 'Try a different weather name like "sunny", "rain", or "storm"'
+            ], 404);
 
         } catch (\Exception $e) {
             Log::error('❌ Weather prediction failed: ' . $e->getMessage());
 
             return response()->json([
-                'weather' => $weather,
+                'weather' => $weather ?? 'unknown',
                 'prediction_mode' => 'error',
                 'next_occurrences' => [],
                 'time_window_probabilities' => [],
