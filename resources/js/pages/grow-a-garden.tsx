@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { H2 } from '@/components/h2';
 import { H3 } from '@/components/h3';
 import { H4 } from '@/components/h4';
-import { PlaceholderPattern } from '@/components/ui/placeholder-pattern';
 import AppLayout from '@/layouts/app-layout';
 import { type BreadcrumbItem } from '@/types';
 import { Head } from '@inertiajs/react';
@@ -25,15 +24,16 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { BarChart } from "recharts"; // Only need BarChart from recharts
+import { BarChart, Line } from "recharts";
 import {
     ChartContainer,
     ChartTooltip,
     ChartTooltipContent,
     ChartBar,
     ChartXAxis,
-    ChartYAxis,
+    ChartYAxis
 } from "@/components/ui/chart";
+
 const growAGarden = () => ({ url: '/grow-a-garden' });
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -59,6 +59,7 @@ interface WeatherData {
 interface AvailableItem {
     value: string;
     label: string;
+    image?: string;
 }
 
 interface CountdownInfo {
@@ -67,83 +68,98 @@ interface CountdownInfo {
     totalSeconds: number;
 }
 
-// Define types for forecast data
 interface ForecastItem {
     name: string;
     icon: string;
     image: string;
     lastSeen: string;
     count: number;
-    frequency: number; // The numeric frequency/percentage (e.g., 100)
-    frequencyString: string; // The descriptive string (e.g., "Appears every 4 hrs")
+    frequency: number;
+    frequencyString: string;
     shops: string[];
     forecastData: Array<{ day: string; value: number }>;
 }
 
+interface NextOccurrence {
+    occurrence: number;
+    predicted_time: string;
+    predicted_delta_minutes: number;
+    confidence: number;
+}
 
+interface CycleProbability {
+    cycle: number;
+    minutes_from_now: number;
+    probability: number;
+}
 
-const calculatePercentage = (frequency: number): string => {
-    return `${frequency}%`;
-};
+interface TimeWindowProbability {
+    minutes: number;
+    predicted_time: string;
+    probability: number;
+}
 
-const calculateFrequencyPercentage = (frequencyString: string): string => {
-    if (!frequencyString) return '0%';
+interface ConfidenceWindow {
+    confidence_level: number;
+    cycles?: number;
+    minutes?: number;
+    predicted_time?: string;
+}
 
-    // Handle different frequency formats
-    const lower = frequencyString.toLowerCase();
+interface ItemPredictionResponse {
+    item: string;
+    shop: string;
+    prediction_mode: string;
+    next_occurrences: NextOccurrence[];
+    cycle_probabilities: CycleProbability[];
+    confidence_windows: ConfidenceWindow[];
+    error?: string;
+}
 
-    // If it already contains a percentage, return it
-    if (lower.includes('%')) {
-        return frequencyString;
-    }
+interface WeatherPredictionResponse {
+    weather: string;
+    prediction_mode: string;
+    next_occurrences: NextOccurrence[];
+    time_window_probabilities: TimeWindowProbability[];
+    confidence_windows: ConfidenceWindow[];
+    error?: string;
+}
 
-    // Parse "x times per y" format
-    const timesMatch = lower.match(/(\d+(\.\d+)?)\s*times?/i);
-    if (timesMatch) {
-        const times = parseFloat(timesMatch[1]);
-        // Assuming max frequency is 10 times per period for 100%
-        const percentage = Math.min((times / 10) * 100, 100);
-        return `${percentage.toFixed(1)}%`;
-    }
+interface PredictionData {
+    type: 'item' | 'weather';
+    name: string;
+    category: string;
+    predictionMode: string;
+    nextRestockProbability: number;
+    nextRestockTime: string;
+    probabilityOverTime: Array<{
+        time: string;
+        probability: number;
+        label: string;
+    }>;
+    confidenceIntervals: Array<{
+        confidence: number;
+        predictedTime: string;
+        label: string;
+    }>;
+    error?: string;
+}
 
-    // Parse "once every x" format
-    const everyMatch = lower.match(/once\s*every\s*(\d+(\.\d+)?)/i);
-    if (everyMatch) {
-        const days = parseFloat(everyMatch[1]);
-        const percentage = (1 / days) * 100;
-        return `${percentage.toFixed(1)}%`;
-    }
-
-    // Parse "x out of y" format
-    const outOfMatch = lower.match(/(\d+)\s*out\s*of\s*(\d+)/i);
-    if (outOfMatch) {
-        const numerator = parseInt(outOfMatch[1]);
-        const denominator = parseInt(outOfMatch[2]);
-        if (denominator > 0) {
-            const percentage = (numerator / denominator) * 100;
-            return `${percentage.toFixed(1)}%`;
-        }
-    }
-
-    // Parse simple number
-    const numberMatch = lower.match(/(\d+(\.\d+)?)/);
-    if (numberMatch) {
-        const number = parseFloat(numberMatch[1]);
-        // Assuming it's a percentage out of 10
-        const percentage = Math.min((number / 10) * 100, 100);
-        return `${percentage.toFixed(1)}%`;
-    }
-
-    // Default fallback
-    return '0%';
-};
-
-// Helper function to format to PH timezone (UTC+8)
 const formatToPHTime = (dateTimeString: string): string => {
     if (!dateTimeString) return 'Unknown';
 
     try {
-        const date = new Date(dateTimeString);
+        let date: Date;
+        date = new Date(dateTimeString);
+
+        if (isNaN(date.getTime())) {
+            const cleaned = dateTimeString.replace(/\.\d+$/, '');
+            date = new Date(cleaned);
+        }
+
+        if (isNaN(date.getTime())) {
+            return dateTimeString;
+        }
 
         const phDate = new Date(date.getTime() + (8 * 60 * 60 * 1000));
 
@@ -160,8 +176,42 @@ const formatToPHTime = (dateTimeString: string): string => {
     }
 };
 
+const convertUTCtoPHTime = (utcString: string): string => {
+    const formatted = formatToPHTime(utcString);
+    const timeMatch = formatted.match(/\d{1,2}:\d{2}\s*[AP]M/i);
+    return timeMatch ? timeMatch[0] : formatted;
+};
 
-// Helper function to generate last 7 days labels
+const formatMinutesFromNow = (minutes: number): string => {
+    const now = new Date();
+    const futureTime = new Date(now.getTime() + minutes * 60000);
+    return futureTime.toLocaleTimeString('en-US', {
+        timeZone: 'Asia/Manila',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+    });
+};
+
+const getShopInterval = (category: string): number => {
+    switch(category.toLowerCase()) {
+        case 'seed': return 5;
+        case 'gear': return 5;
+        case 'event': return 30;
+        case 'egg': return 30;
+        case 'cosmetic': return 240;
+        default: return 5;
+    }
+};
+
+const getIntervalLabel = (intervalMinutes: number): string => {
+    if (intervalMinutes >= 60) {
+        const hours = intervalMinutes / 60;
+        return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    }
+    return `${intervalMinutes} ${intervalMinutes === 1 ? 'minute' : 'minutes'}`;
+};
+
 const generateLast7Days = (): string[] => {
     const days = [];
     const today = new Date();
@@ -182,20 +232,6 @@ const generateLast7Days = (): string[] => {
     return days;
 };
 
-// Helper function to get weather icon
-const getWeatherIcon = (weatherName: string): string => {
-    const weatherIcons: Record<string, string> = {
-        'heatwave': '🔥',
-        'meteor': '☄️',
-        'rain': '🌧️',
-        'sandstorm': '🌪️',
-        'snow': '❄️',
-        'thunder': '⛈️'
-    };
-    return weatherIcons[weatherName.toLowerCase()] || '⛅';
-};
-
-// Helper function to get category icon
 const getCategoryIcon = (category: string): string => {
     const categoryIcons: Record<string, string> = {
         'seed': '🌱',
@@ -221,6 +257,65 @@ const getWeatherIconFromName = (weatherName: string): string => {
     return '⛅';
 };
 
+const calculateFrequencyPercentage = (frequencyString: string): string => {
+    if (!frequencyString) return '0%';
+
+    const lower = frequencyString.toLowerCase();
+    const appearsEveryMatch = lower.match(/appears every (\d+(\.\d+)?)\s*hrs/i);
+    if (appearsEveryMatch) {
+        const hours = parseFloat(appearsEveryMatch[1]);
+        const timesPerDay = 24 / hours;
+        const percentage = Math.min((timesPerDay / 24) * 100, 100);
+        return `${percentage.toFixed(1)}%`;
+    }
+
+    const appearsEveryMinsMatch = lower.match(/appears every (\d+(\.\d+)?)\s*mins/i);
+    if (appearsEveryMinsMatch) {
+        const minutes = parseFloat(appearsEveryMinsMatch[1]);
+        const hours = minutes / 60;
+        const timesPerDay = 24 / hours;
+        const percentage = Math.min((timesPerDay / 24) * 100, 100);
+        return `${percentage.toFixed(1)}%`;
+    }
+
+    if (lower.includes('%')) {
+        return frequencyString;
+    }
+
+    const timesMatch = lower.match(/(\d+(\.\d+)?)\s*times?/i);
+    if (timesMatch) {
+        const times = parseFloat(timesMatch[1]);
+        const percentage = Math.min((times / 10) * 100, 100);
+        return `${percentage.toFixed(1)}%`;
+    }
+
+    const everyMatch = lower.match(/once\s*every\s*(\d+(\.\d+)?)/i);
+    if (everyMatch) {
+        const days = parseFloat(everyMatch[1]);
+        const percentage = (1 / days) * 100;
+        return `${percentage.toFixed(1)}%`;
+    }
+
+    const outOfMatch = lower.match(/(\d+)\s*out\s*of\s*(\d+)/i);
+    if (outOfMatch) {
+        const numerator = parseInt(outOfMatch[1]);
+        const denominator = parseInt(outOfMatch[2]);
+        if (denominator > 0) {
+            const percentage = (numerator / denominator) * 100;
+            return `${percentage.toFixed(1)}%`;
+        }
+    }
+
+    const numberMatch = lower.match(/(\d+(\.\d+)?)/);
+    if (numberMatch) {
+        const number = parseFloat(numberMatch[1]);
+        const percentage = Math.min((number / 10) * 100, 100);
+        return `${percentage.toFixed(1)}%`;
+    }
+
+    return '0%';
+};
+
 export default function GrowAGarden() {
     const [seedStock, setSeedStock] = useState<StockItem[]>([]);
     const [gearStock, setGearStock] = useState<StockItem[]>([]);
@@ -231,7 +326,6 @@ export default function GrowAGarden() {
     const [lastUpdateTime, setLastUpdateTime] = useState<Date>(new Date());
     const [isLoading, setIsLoading] = useState(true);
 
-    // For forecast section
     const [selectedCategory, setSelectedCategory] = useState<string>("");
     const [selectedItem, setSelectedItem] = useState<string>("");
     const [availableItems, setAvailableItems] = useState<AvailableItem[]>([]);
@@ -239,10 +333,11 @@ export default function GrowAGarden() {
     const [selectedWeatherData, setSelectedWeatherData] = useState<ForecastItem | null>(null);
     const [isLoadingForecast, setIsLoadingForecast] = useState(false);
 
-    // For tracking which shops are currently fetching
-    const [fetchingShops, setFetchingShops] = useState<Set<string>>(new Set());
+    const [predictionData, setPredictionData] = useState<PredictionData | null>(null);
+    const [isLoadingPrediction, setIsLoadingPrediction] = useState(false);
+    const [showPredictions, setShowPredictions] = useState(false);
 
-    // Store countdown values
+    const [fetchingShops, setFetchingShops] = useState<Set<string>>(new Set());
     const [countdowns, setCountdowns] = useState<Record<string, CountdownInfo>>({
         seed: { minutes: 5, seconds: 0, totalSeconds: 300 },
         gear: { minutes: 5, seconds: 0, totalSeconds: 300 },
@@ -251,12 +346,139 @@ export default function GrowAGarden() {
         cosmetic: { minutes: 240, seconds: 0, totalSeconds: 14400 }
     });
 
-    // Refs for intervals and timeouts
     const countdownIntervalsRef = useRef<Record<string, NodeJS.Timeout>>({});
     const fetchTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
     const hasFetchedOnRestockRef = useRef<Record<string, boolean>>({});
 
-    // Calculate restock times for display only
+    const fetchPredictions = async (): Promise<void> => {
+        if (!selectedCategory || !selectedItem) {
+            console.error('Cannot fetch predictions: missing category or item');
+            return;
+        }
+
+        setIsLoadingPrediction(true);
+        setPredictionData(null);
+
+        try {
+            let endpoint = '';
+            let response: ItemPredictionResponse | WeatherPredictionResponse | null = null;
+
+            console.log(`🔮 Fetching predictions for ${selectedCategory}: ${selectedItem}`);
+
+            if (selectedCategory === 'weather') {
+                // ... weather code remains the same ...
+            } else {
+                // For items: Use the item name as-is (with spaces)
+                const endpoint = `/proxy/predict/items/${encodeURIComponent(selectedItem)}`;
+                console.log(`🔗 Calling item endpoint: ${endpoint}`);
+
+                const res = await fetch(endpoint);
+
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    throw new Error(errorData.error || errorData.detail || `HTTP ${res.status}`);
+                }
+
+                response = await res.json() as ItemPredictionResponse;
+
+                // FIX: Check if response exists
+                if (!response) {
+                    throw new Error('No response received from item prediction API');
+                }
+
+                // FIX: Type guard for error
+                if ('error' in response && response.error) {
+                    throw new Error(`Item prediction error: ${response.error}`);
+                }
+
+                // FIX: Type narrowing
+                const itemResponse = response as ItemPredictionResponse;
+                const shopInterval = getShopInterval(selectedCategory);
+                const mainOccurrence = itemResponse.next_occurrences?.[0];
+
+                if (!mainOccurrence) {
+                    throw new Error('No prediction data available');
+                }
+
+                // DEBUG: Log what data we're getting
+                console.log('📊 Raw API response:', itemResponse);
+                console.log('📊 Confidence windows:', itemResponse.confidence_windows);
+                console.log('📊 Confidence windows length:', itemResponse.confidence_windows?.length);
+                console.log('📊 Confidence windows data:', itemResponse.confidence_windows);
+
+                if (itemResponse.confidence_windows && itemResponse.confidence_windows.length > 0) {
+                    console.log('📊 First confidence window:', itemResponse.confidence_windows[0]);
+                    console.log('📊 Confidence level:', itemResponse.confidence_windows[0].confidence_level);
+                    console.log('📊 Cycles:', itemResponse.confidence_windows[0].cycles);
+                }
+
+                const transformedData: PredictionData = {
+                    type: 'item',
+                    name: itemResponse.item,
+                    category: selectedCategory,
+                    predictionMode: itemResponse.prediction_mode,
+                    nextRestockProbability: mainOccurrence.confidence,
+                    nextRestockTime: convertUTCtoPHTime(mainOccurrence.predicted_time),
+                    probabilityOverTime: (itemResponse.cycle_probabilities || []).map((cycle: CycleProbability) => ({
+                        time: formatMinutesFromNow(cycle.minutes_from_now),
+                        probability: cycle.probability,
+                        label: `Cycle ${cycle.cycle}`
+                    })),
+                    confidenceIntervals: (itemResponse.confidence_windows || []).map(window => {
+                        // DEBUG: Log each window transformation
+                        console.log('🔄 Transforming confidence window:', window);
+
+                        const cycles = window.cycles || 1;
+                        const predictedTime = formatMinutesFromNow(cycles * shopInterval);
+                        const label = `${cycles} cycle${cycles !== 1 ? 's' : ''}`;
+
+                        console.log(`🔄 Result: ${window.confidence_level}% -> ${predictedTime} (${label})`);
+
+                        return {
+                            confidence: window.confidence_level,
+                            predictedTime: predictedTime,
+                            label: label
+                        };
+                    })
+                };
+
+                // DEBUG: Log the final transformed data
+                console.log('✅ Transformed prediction data:', transformedData);
+                console.log('✅ Confidence intervals count:', transformedData.confidenceIntervals.length);
+
+                if (transformedData.confidenceIntervals.length === 0) {
+                    console.log('⚠️ No confidence intervals were created!');
+                } else {
+                    console.log('✅ Confidence intervals:', transformedData.confidenceIntervals);
+                }
+
+                setPredictionData(transformedData);
+            }
+
+            setShowPredictions(true);
+            console.log('✅ Predictions loaded successfully');
+
+        } catch (error) {
+            console.error('Failed to fetch predictions:', error);
+
+            setPredictionData({
+                type: selectedCategory === 'weather' ? 'weather' : 'item',
+                name: selectedItem,
+                category: selectedCategory,
+                predictionMode: 'error',
+                nextRestockProbability: 0,
+                nextRestockTime: 'Unknown',
+                probabilityOverTime: [],
+                confidenceIntervals: [],
+                error: error instanceof Error ? error.message : 'Unknown error'
+            });
+
+            setShowPredictions(true);
+        } finally {
+            setIsLoadingPrediction(false);
+        }
+    };
+
     const calculateRestockTimes = (intervalMinutes: number) => {
         const now = new Date();
         const intervalMs = intervalMinutes * 60 * 1000;
@@ -273,21 +495,17 @@ export default function GrowAGarden() {
         };
     };
 
-    // Restock times for display
     const seedRestock = calculateRestockTimes(5);
     const gearRestock = calculateRestockTimes(5);
     const cosmeticRestock = calculateRestockTimes(240);
     const eventShopRestock = calculateRestockTimes(30);
     const eggRestock = calculateRestockTimes(30);
 
-    // Function to start countdown for a shop
     const startShopCountdown = useCallback((shopKey: string, intervalMinutes: number) => {
-        // Clear existing interval if any
         if (countdownIntervalsRef.current[shopKey]) {
             clearInterval(countdownIntervalsRef.current[shopKey]);
         }
 
-        // Calculate initial time until next restock
         const now = new Date();
         const intervalMs = intervalMinutes * 60 * 1000;
         const midnight = new Date(now);
@@ -304,7 +522,6 @@ export default function GrowAGarden() {
         const initialMinutes = Math.floor(totalSeconds / 60);
         const initialSeconds = totalSeconds % 60;
 
-        // Set initial countdown
         setCountdowns(prev => ({
             ...prev,
             [shopKey]: {
@@ -314,10 +531,8 @@ export default function GrowAGarden() {
             }
         }));
 
-        // Reset fetch flag
         hasFetchedOnRestockRef.current[shopKey] = false;
 
-        // Start countdown interval
         countdownIntervalsRef.current[shopKey] = setInterval(() => {
             setCountdowns(prev => {
                 const current = prev[shopKey];
@@ -329,16 +544,14 @@ export default function GrowAGarden() {
                 const newMinutes = Math.floor(newTotalSeconds / 60);
                 const newSeconds = newTotalSeconds % 60;
 
-                // Check if countdown reached 0 AND we haven't fetched yet
                 if (newTotalSeconds === 0 && !hasFetchedOnRestockRef.current[shopKey]) {
                     hasFetchedOnRestockRef.current[shopKey] = true;
 
-                    // Trigger fetch for this shop
                     setTimeout(() => {
                         const shopConfig = {
                             seed: { url: 'https://gagapi.onrender.com/seeds', setter: setSeedStock, name: 'Seed Shop' },
                             gear: { url: 'https://gagapi.onrender.com/gear', setter: setGearStock, name: 'Gear Shop' },
-                            event: { url: 'https://gagapi.onrender.com/eventshop', setter: setEventShopStock, name: 'Event Shop' },
+                            event: { url: 'https://gagapi.onrender.com/honey', setter: setEventShopStock, name: 'Event Shop' },
                             egg: { url: 'https://gagapi.onrender.com/eggs', setter: setEggStock, name: 'Egg Shop' },
                             cosmetic: { url: 'https://gagapi.onrender.com/cosmetics', setter: setCosmeticStock, name: 'Cosmetic Shop' }
                         }[shopKey];
@@ -361,17 +574,14 @@ export default function GrowAGarden() {
         }, 1000);
     }, []);
 
-    // Function to format countdown for display
     const formatCountdown = (shopKey: string): string => {
         const countdown = countdowns[shopKey];
         if (!countdown) return "0:00:00";
 
-        // When countdown reaches 0, show "Restocking..." while fetching
         if (countdown.totalSeconds === 0 && fetchingShops.has(shopKey)) {
             return "Restocking...";
         }
 
-        // When countdown reaches 0 and fetch is done, reset to full interval
         if (countdown.totalSeconds === 0 && !fetchingShops.has(shopKey)) {
             const intervalMinutes = {
                 seed: 5, gear: 5, event: 30, egg: 30, cosmetic: 240
@@ -411,61 +621,25 @@ export default function GrowAGarden() {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
 
-            console.log(`🔑 Available keys for ${shopName}:`, Object.keys(data));
-
             let shopData = [];
 
             if (shopKey === 'seed') {
                 shopData = data.seed_stock || data.raw_seeds || [];
-                console.log(`🌱 Seed shop items: ${shopData.length}`);
             }
             else if (shopKey === 'gear') {
                 shopData = data.gear_stock || data.raw_gear || [];
-                console.log(`🛠️ Gear shop items: ${shopData.length}`);
             }
             else if (shopKey === 'egg') {
                 shopData = data.egg_stock || data.raw_eggs || [];
-                console.log(`🥚 Egg shop items: ${shopData.length}`);
             }
             else if (shopKey === 'cosmetic') {
                 shopData = data.cosmetic_stock || data.raw_cosmetics || [];
-                console.log(`💄 Cosmetic shop items: ${shopData.length}`);
             }
-            // EVENT SHOP - SPECIAL HANDLING
             else if (shopKey === 'event') {
-                console.log(`🎪 Looking for event shop data...`);
-
-                // Try all possible event data sources
-                if (data.event_shop_stock && Array.isArray(data.event_shop_stock) && data.event_shop_stock.length > 0) {
-                    shopData = data.event_shop_stock;
-                    console.log(`✅ Using event_shop_stock: ${shopData.length} items`);
-                }
-                else if (data.raw_eventshop && Array.isArray(data.raw_eventshop) && data.raw_eventshop.length > 0) {
-                    shopData = data.raw_eventshop;
-                    console.log(`✅ Using raw_eventshop: ${shopData.length} items`);
-                }
-                else {
-                    // Check any key containing "event"
-                    const eventKeys = Object.keys(data).filter(k =>
-                        k.toLowerCase().includes('event') &&
-                        Array.isArray(data[k])
-                    );
-                    console.log(`🔍 Found event-related keys:`, eventKeys);
-
-                    if (eventKeys.length > 0) {
-                        shopData = data[eventKeys[0]];
-                        console.log(`✅ Using "${eventKeys[0]}": ${shopData.length} items`);
-                    }
-                }
-
-                if (shopData.length > 0 && shopData[0]) {
-                    console.log('📋 First event item structure:', shopData[0]);
-                }
+                shopData = data.event_shop_stock || data.raw_honey || [];
             }
 
-            // Transform data to consistent format
             const transformedData = shopData.map((item: any) => {
-                // Use the same transformation logic as fetchAllData
                 const itemName = item.name || item.Name || item.title || 'Unknown Item';
 
                 const stockCount =
@@ -492,11 +666,9 @@ export default function GrowAGarden() {
                 };
             });
 
-            console.log(`✅ ${shopName} transformed items:`, transformedData.length);
             setter(transformedData);
             setLastUpdateTime(new Date());
 
-            // Reset countdown
             setTimeout(() => {
                 const intervalMinutes = {
                     seed: 5, gear: 5, event: 30, egg: 30, cosmetic: 240
@@ -527,7 +699,6 @@ export default function GrowAGarden() {
         }
     }, [startShopCountdown]);
 
-    // Function to fetch weather data
     const fetchWeatherData = useCallback(async () => {
         try {
             const response = await fetch('/proxy/events/grow-a-garden');
@@ -557,7 +728,6 @@ export default function GrowAGarden() {
             setIsLoading(true);
             console.log('🚀 Starting to fetch all data...');
 
-            // Fetch ALL data from your Laravel endpoint
             const response = await fetch('/proxy/stock/grow-a-garden');
             console.log('📡 Response status:', response.status);
 
@@ -566,85 +736,23 @@ export default function GrowAGarden() {
             }
 
             const data = await response.json();
-            console.log('📦 Full stock data received');
 
-            // CRITICAL: Log EVERY key and its type/length
-            console.log('🔑 ALL KEYS in response:');
-            Object.keys(data).forEach(key => {
-                console.log(`  ${key}:`, Array.isArray(data[key]) ? `Array(${data[key].length})` : typeof data[key]);
-            });
-
-            console.log('🔍 DIRECT CHECK of event_shop_stock:');
-            console.log('Type:', typeof data.event_shop_stock);
-            console.log('Is array?', Array.isArray(data.event_shop_stock));
-            console.log('Length:', data.event_shop_stock ? data.event_shop_stock.length : 'undefined');
-            if (data.event_shop_stock && data.event_shop_stock.length > 0) {
-                console.log('First item structure:', data.event_shop_stock[0]);
-            }
-
-            console.log('🔍 Checking raw_eventshop:');
-            console.log('Length:', data.raw_eventshop ? data.raw_eventshop.length : 'undefined');
-            if (data.raw_eventshop && data.raw_eventshop.length > 0) {
-                console.log('First raw item:', data.raw_eventshop[0]);
-            }
-
-            // Set all shop data from the single response
             setSeedStock(data.seed_stock || data.raw_seeds || []);
             setGearStock(data.gear_stock || data.raw_gear || []);
             setEggStock(data.egg_stock || data.raw_eggs || []);
             setCosmeticStock(data.cosmetic_stock || data.raw_cosmetics || []);
 
-            console.log('🎯 Setting event shop data...');
-
-            let eventSource = null;
-            let eventItems = [];
-
-
-            if (data.event_shop_stock && Array.isArray(data.event_shop_stock) && data.event_shop_stock.length > 0) {
-                console.log('✅ Using transformed event_shop_stock data');
-                eventSource = 'event_shop_stock';
-                eventItems = data.event_shop_stock;
-            }
-            else if (data.raw_eventshop && Array.isArray(data.raw_eventshop) && data.raw_eventshop.length > 0) {
-                console.log('✅ Using raw_eventshop data');
-                eventSource = 'raw_eventshop';
-                eventItems = data.raw_eventshop;
-            }
-            else {
-                const eventKeys = Object.keys(data).filter(k =>
-                    k.toLowerCase().includes('event') &&
-                    Array.isArray(data[k]) &&
-                    data[k].length > 0
-                );
-                if (eventKeys.length > 0) {
-                    console.log(`✅ Using event data from: "${eventKeys[0]}"`);
-                    eventSource = eventKeys[0];
-                    eventItems = data[eventKeys[0]];
-                }
-            }
+            let eventItems = data.event_shop_stock || data.raw_honey || [];
 
             if (eventItems.length > 0) {
-                console.log(`📊 Found ${eventItems.length} event items from source: ${eventSource}`);
-
-
-                const transformedEventData = eventItems.map((item: any, index: number) => {
-                    // Debug first item
-                    if (index === 0) {
-                        console.log('🔍 First event item raw structure:', item);
-                    }
-
-                    // Extract name from various possible fields
+                const transformedEventData = eventItems.map((item: any) => {
                     const itemName = item.name || item.Name || item.title || 'Unknown Item';
-
-                    // Extract stock count from various possible fields
                     const stockCount =
                         item.Stock !== undefined ? item.Stock :
                             item.stock !== undefined ? item.stock :
                                 item.quantity !== undefined ? item.quantity :
                                     item.Quantity !== undefined ? item.Quantity :
                                         0;
-
-                    // Extract image from various possible fields
                     const itemImage =
                         item.image || item.Image || item.img || item.icon ||
                         `https://cdn.3itx.tech/image/GrowAGarden/${
@@ -662,11 +770,8 @@ export default function GrowAGarden() {
                     };
                 });
 
-                console.log('✅ Transformed event data sample:', transformedEventData[0]);
-                console.log(`✅ Total event items: ${transformedEventData.length}`);
                 setEventShopStock(transformedEventData);
             } else {
-                console.log('⚠️ No event shop data found in any source');
                 setEventShopStock([]);
             }
 
@@ -693,8 +798,6 @@ export default function GrowAGarden() {
 
         } catch (error) {
             console.error('Failed to fetch data:', error);
-
-            // Set empty arrays to prevent UI errors
             setSeedStock([]);
             setGearStock([]);
             setEggStock([]);
@@ -705,7 +808,6 @@ export default function GrowAGarden() {
         }
     }, []);
 
-    // Initial setup
     useEffect(() => {
         fetchAllData();
 
@@ -733,7 +835,6 @@ export default function GrowAGarden() {
         };
     }, [fetchAllData, fetchWeatherData, startShopCountdown]);
 
-    // Transform weather data
     const weatherEvents = weatherData ? [{
         Name: weatherData.type,
         DisplayName: weatherData.type.charAt(0).toUpperCase() + weatherData.type.slice(1),
@@ -746,7 +847,6 @@ export default function GrowAGarden() {
         duration: 3600
     }] : [];
 
-    // Manual refresh
     const handleManualRefresh = useCallback(async () => {
         setIsLoading(true);
         await fetchAllData();
@@ -768,7 +868,6 @@ export default function GrowAGarden() {
         <AppLayout breadcrumbs={breadcrumbs} data-theme="red">
             <Head title="Grow a Garden" />
             <div className="flex h-full flex-1 flex-col gap-4 overflow-x-auto rounded-xl p-4 md:p-6 bg-transparent">
-                {/* Hero Section */}
                 <div className="flex flex-col items-center justify-center w-full my-8 md:my-16 leading-none bg-transparent text-center px-4">
                     <H3 className="text-base md:text-lg lg:text-xl">
                         Stocks and Weather Events Live Tracking and Forecast for
@@ -778,7 +877,6 @@ export default function GrowAGarden() {
                     </H2>
                 </div>
 
-                {/* Header with Refresh Button */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center w-full gap-4 px-4">
                     <H4 className="text-lg md:text-xl">
                         Live Stocks and Weather Events
@@ -795,7 +893,6 @@ export default function GrowAGarden() {
                     )}
                 </div>
 
-                {/* Responsive Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 auto-rows-min gap-4 md:gap-6 bg-transparent px-4">
                     <StockCard
                         title="Seed Shop"
@@ -843,7 +940,6 @@ export default function GrowAGarden() {
                         isLoading={isLoading || fetchingShops.has('cosmetic')}
                     />
 
-                    {/* Weather Card - spans full width on mobile, then normal */}
                     <div className="sm:col-span-2 lg:col-span-1">
                         <WeatherCard
                             title="Current Weather"
@@ -853,14 +949,12 @@ export default function GrowAGarden() {
                     </div>
                 </div>
 
-                {/* Forecast Section - WORKING VERSION */}
                 <div className="mt-8 md:mt-20 px-4">
                     <H4 className="text-lg md:text-xl mb-4">
                         Stocks and Weather Events Forecast
                     </H4>
                     <div className="relative min-h-[50vh] md:min-h-[60vh] flex flex-col gap-8 p-6 rounded-xl bg-background/20 border border-sidebar-border/70">
 
-                        {/* CATEGORY SELECTION */}
                         <div>
                             <label className="block text-lg font-semibold mb-3">Select Category</label>
                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -879,10 +973,10 @@ export default function GrowAGarden() {
                                             setSelectedItem("");
                                             setSelectedItemData(null);
                                             setSelectedWeatherData(null);
+                                            setShowPredictions(false);
 
                                             try {
                                                 if (category === "weather") {
-                                                    // Weather always has stats
                                                     const response = await fetch('/proxy/forecast/weather');
                                                     if (response.ok) {
                                                         const data = await response.json();
@@ -892,15 +986,12 @@ export default function GrowAGarden() {
                                                         })));
                                                     }
                                                 } else {
-                                                    // Get items with stats from the forecast API
                                                     const response = await fetch(`/proxy/forecast/items-by-category/${category}`);
 
                                                     if (response.ok) {
                                                         const categoryItems = await response.json();
-                                                        console.log(`📊 ${category} items with stats:`, categoryItems);
 
                                                         if (categoryItems.length > 0) {
-                                                            // Get current stock items for this category to find images
                                                             let currentStockItems: StockItem[] = [];
                                                             switch(category) {
                                                                 case 'seed': currentStockItems = seedStock; break;
@@ -910,19 +1001,16 @@ export default function GrowAGarden() {
                                                                 case 'cosmetic': currentStockItems = cosmeticStock; break;
                                                             }
 
-                                                            // Create a map of item names to their images
                                                             const stockItemMap = new Map();
                                                             currentStockItems.forEach(item => {
                                                                 stockItemMap.set(item.name.toLowerCase(), item.image);
                                                             });
 
-                                                            // Create available items with their actual images/names
                                                             const itemsWithData = categoryItems.map((item: any) => {
                                                                 const itemName = item.name || item.item || 'Unknown';
                                                                 const itemImage = stockItemMap.get(itemName.toLowerCase()) ||
                                                                     `https://cdn.3itx.tech/image/GrowAGarden/${itemName.toLowerCase().replace(/\s+/g, '_')}`;
 
-                                                                // Return item data
                                                                 return {
                                                                     value: itemName,
                                                                     label: itemName,
@@ -933,7 +1021,6 @@ export default function GrowAGarden() {
                                                             setAvailableItems(itemsWithData);
                                                         } else {
                                                             setAvailableItems([]);
-                                                            console.log(`⚠️ No ${category} items found with historical stats`);
                                                         }
                                                     } else {
                                                         setAvailableItems([]);
@@ -947,14 +1034,13 @@ export default function GrowAGarden() {
                                     >
                                         <span className="text-2xl mb-1">{getCategoryIcon(category)}</span>
                                         <span className="text-xs font-medium">
-                            {category.charAt(0).toUpperCase() + category.slice(1)} {category === 'weather' ? '' : 'Shop'}
-                        </span>
+                                            {category.charAt(0).toUpperCase() + category.slice(1)} {category === 'weather' ? '' : 'Shop'}
+                                        </span>
                                     </Button>
                                 ))}
                             </div>
                         </div>
 
-                        {/* ITEM SELECTION */}
                         {selectedCategory && (
                             <div>
                                 <label className="block text-lg font-semibold mb-2">
@@ -965,6 +1051,7 @@ export default function GrowAGarden() {
                                     onValueChange={async (itemName) => {
                                         console.log('🎯 Selected item:', itemName);
                                         setSelectedItem(itemName);
+                                        setShowPredictions(false);
 
                                         if (selectedCategory && itemName) {
                                             setIsLoadingForecast(true);
@@ -977,17 +1064,19 @@ export default function GrowAGarden() {
                                                     if (response.ok) {
                                                         const weatherData = await response.json();
 
-                                                        // Check if weather has actually appeared (count > 0)
                                                         if (weatherData.count > 0) {
                                                             const dateLabels = generateLast7Days();
+                                                            const frequencyPercentageStr = calculateFrequencyPercentage(weatherData.frequency_string);
+                                                            const frequencyPercentage = parseFloat(frequencyPercentageStr.replace('%', ''));
+
                                                             const forecastItem: ForecastItem = {
                                                                 name: weatherData.weather.charAt(0).toUpperCase() + weatherData.weather.slice(1),
                                                                 icon: getWeatherIconFromName(weatherData.weather),
                                                                 image: `https://cdn.3itx.tech/image/GrowAGarden/${weatherData.weather.toLowerCase()}`,
                                                                 lastSeen: weatherData.last_seen ? formatToPHTime(weatherData.last_seen) : 'Never',
                                                                 count: weatherData.count || 0,
-                                                                frequency: weatherData.frequency || 0, // Add this
-                                                                frequencyString: weatherData.frequency_string || 'Unknown frequency', // Add this
+                                                                frequency: frequencyPercentage,
+                                                                frequencyString: weatherData.frequency_string || 'Unknown frequency',
                                                                 shops: ['eventshop'],
                                                                 forecastData: (weatherData.appearances || Array(7).fill(0)).map((value: number, index: number) => ({
                                                                     day: dateLabels[index] || `Day ${index + 1}`,
@@ -997,14 +1086,12 @@ export default function GrowAGarden() {
 
                                                             setSelectedWeatherData(forecastItem);
                                                         } else {
-                                                            // Weather has never appeared
                                                             setSelectedWeatherData(null);
                                                         }
                                                     }
                                                 } else {
                                                     console.log(`📊 Searching stats for: "${itemName}"`);
 
-                                                    // Use /item-stats/{item} endpoint which searches in the array
                                                     const response = await fetch(`/proxy/forecast/item-stats/${encodeURIComponent(itemName)}`);
 
                                                     if (response.ok) {
@@ -1017,9 +1104,9 @@ export default function GrowAGarden() {
                                                             icon: getCategoryIcon(selectedCategory),
                                                             image: `https://cdn.3itx.tech/image/GrowAGarden/${itemName.toLowerCase().replace(/\s+/g, '_')}`,
                                                             lastSeen: formatToPHTime(itemData.last_seen),
-                                                            count: itemData.appearances?.reduce((sum: number, val: number) => sum + val, 0) || 0, // Total of appearances array
-                                                            frequency: itemData.frequency || 0, // The percentage (100)
-                                                            frequencyString: itemData.frequency_string || 'Unknown frequency', // "Appears every 4 hrs"
+                                                            count: itemData.appearances?.reduce((sum: number, val: number) => sum + val, 0) || 0,
+                                                            frequency: itemData.frequency || 0,
+                                                            frequencyString: itemData.frequency_string || 'Unknown frequency',
                                                             shops: itemData.shops || [selectedCategory],
                                                             forecastData: (itemData.appearances || Array(7).fill(0)).map((value: number, index: number) => ({
                                                                 day: dateLabels[index] || `Day ${index + 1}`,
@@ -1029,7 +1116,6 @@ export default function GrowAGarden() {
 
                                                         setSelectedItemData(forecastItem);
                                                     } else {
-                                                        // Item not found or has no stats
                                                         console.log(`❌ Item "${itemName}" has no historical data`);
                                                         setSelectedItemData(null);
                                                     }
@@ -1056,14 +1142,12 @@ export default function GrowAGarden() {
                                         {availableItems.map((item) => (
                                             <SelectItem key={item.value} value={item.value}>
                                                 <div className="flex items-center gap-2">
-                                                    {/* Display item image if available */}
-                                                    {(item as any).image ? (
+                                                    {item.image ? (
                                                         <img
-                                                            src={(item as any).image}
+                                                            src={item.image}
                                                             alt={item.label}
                                                             className="w-6 h-6 rounded object-cover"
                                                             onError={(e) => {
-                                                                // Fallback if image fails to load
                                                                 e.currentTarget.style.display = 'none';
                                                             }}
                                                         />
@@ -1077,7 +1161,6 @@ export default function GrowAGarden() {
                             </div>
                         )}
 
-                        {/* LOADING STATE */}
                         {isLoadingForecast && (
                             <div className="flex flex-col items-center justify-center h-96 rounded-lg bg-background/10">
                                 <div className="text-center py-8">
@@ -1090,7 +1173,6 @@ export default function GrowAGarden() {
                             </div>
                         )}
 
-                        {/* FORECAST DISPLAY - Shows only when data is available from API */}
                         {(selectedItemData || selectedWeatherData) && !isLoadingForecast ? (
                             <div className="flex justify-center">
                                 <div className="w-full max-w-4xl">
@@ -1105,7 +1187,6 @@ export default function GrowAGarden() {
                                                                 alt={selectedItemData.name}
                                                                 className="w-full h-full object-cover"
                                                                 onError={(e) => {
-                                                                    // If image fails, show icon
                                                                     e.currentTarget.style.display = 'none';
                                                                     const iconSpan = document.createElement('span');
                                                                     iconSpan.className = 'text-4xl';
@@ -1122,36 +1203,28 @@ export default function GrowAGarden() {
                                                             {selectedItemData.name}
                                                         </CardTitle>
                                                         <CardDescription className="mt-2">
-                                    <span className="text-sm bg-primary/20 px-2 py-1 rounded ml-2">
-                                        {selectedCategory?.charAt(0).toUpperCase() + selectedCategory?.slice(1)} Shop
-                                    </span>
+                                                            <span className="text-sm bg-primary/20 px-2 py-1 rounded ml-2">
+                                                                {selectedCategory?.charAt(0).toUpperCase() + selectedCategory?.slice(1)} Shop
+                                                            </span>
                                                         </CardDescription>
                                                     </div>
                                                 </div>
                                             </CardHeader>
 
                                             <CardContent>
-                                                {/* CHANGED: Updated grid to have 4 columns */}
                                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-                                                    {/* Box 1: Last Seen - UPDATED with text-primary */}
                                                     <div className="bg-primary/10 rounded-lg p-3 text-center">
                                                         <p className="text-xs text-muted-foreground">Last Seen</p>
                                                         <p className="text-base font-semibold text-primary">{selectedItemData.lastSeen}</p>
                                                     </div>
-
-                                                    {/* Box 2: Appearance Count */}
                                                     <div className="bg-primary/10 rounded-lg p-3 text-center">
                                                         <p className="text-xs text-muted-foreground">Appearance Count</p>
                                                         <p className="text-xl font-bold text-primary">x{selectedItemData.count}</p>
                                                     </div>
-
-                                                    {/* Box 3: Appearance Rate */}
                                                     <div className="bg-primary/10 rounded-lg p-3 text-center">
                                                         <p className="text-xs text-muted-foreground">Appearance Rate</p>
                                                         <p className="text-xl font-bold text-primary">{selectedItemData.frequency}%</p>
                                                     </div>
-
-                                                    {/* Box 4: NEW - Frequency String */}
                                                     <div className="bg-primary/10 rounded-lg p-3 text-center">
                                                         <p className="text-xs text-muted-foreground">Frequency</p>
                                                         <p className="text-base font-semibold text-primary">
@@ -1162,48 +1235,53 @@ export default function GrowAGarden() {
 
                                                 <div>
                                                     <h4 className="text-lg font-semibold mb-4 text-center">7-Day Appearance History</h4>
-                                                    <div className="h-64 min-h-[256px]">
+                                                    <div className="h-64 min-h-[256px] bg-card/30 rounded-lg border border-border/50 p-4">
                                                         <ChartContainer
                                                             config={{
                                                                 value: {
                                                                     label: "Appearances",
-                                                                    color: "hsl(var(--primary))",
+                                                                    color: "#3b82f6",
                                                                 },
                                                             }}
                                                             className="h-full w-full"
                                                         >
                                                             <BarChart data={selectedItemData.forecastData}>
+                                                                <defs>
+                                                                    <linearGradient id="blueGradient" x1="0" y1="0" x2="0" y2="1">
+                                                                        <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.8} />
+                                                                        <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.9} />
+                                                                    </linearGradient>
+                                                                </defs>
+
                                                                 <ChartXAxis
                                                                     dataKey="day"
-                                                                    stroke="hsl(var(--muted-foreground))"
-                                                                    axisLine={false}
                                                                     tickLine={false}
-                                                                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                                                                    axisLine={false}
+                                                                    tickMargin={8}
+                                                                    tickFormatter={(value) => value}
                                                                 />
                                                                 <ChartYAxis
-                                                                    stroke="hsl(var(--muted-foreground))"
-                                                                    axisLine={false}
                                                                     tickLine={false}
-                                                                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                                                                    axisLine={false}
+                                                                    tickMargin={8}
                                                                 />
                                                                 <ChartTooltip
+                                                                    cursor={{ fill: 'hsl(var(--muted))', opacity: 0.3 }}
                                                                     content={
                                                                         <ChartTooltipContent
-                                                                            labelFormatter={(value: string) => value}
+                                                                            hideLabel={true}
                                                                             formatter={(value: unknown) => {
-                                                                                // Handle both number and string values
                                                                                 const numValue = typeof value === 'number' ? value :
                                                                                     typeof value === 'string' ? parseFloat(value) : 0;
-                                                                                return [`x${numValue}`, ' Appearances'] as [string, string];
+                                                                                return [`x${numValue}`, 'Appearances'] as [string, string];
                                                                             }}
                                                                         />
                                                                     }
                                                                 />
                                                                 <ChartBar
                                                                     dataKey="value"
-                                                                    fill="var(--color-value)"
+                                                                    fill="url(#blueGradient)"
                                                                     radius={[4, 4, 0, 0]}
-                                                                    className="transition-all hover:opacity-80"
                                                                 />
                                                             </BarChart>
                                                         </ChartContainer>
@@ -1212,11 +1290,19 @@ export default function GrowAGarden() {
                                             </CardContent>
                                             <CardFooter className="flex justify-center pt-6">
                                                 <Button
-                                                    onClick={() => alert(`Predicting forecast for ${selectedItemData.name}...`)}
+                                                    onClick={fetchPredictions}
                                                     className="w-full max-w-md"
                                                     variant="default"
+                                                    disabled={isLoadingPrediction}
                                                 >
-                                                    Predict Future Trends
+                                                    {isLoadingPrediction ? (
+                                                        <>
+                                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                                            Loading Predictions...
+                                                        </>
+                                                    ) : (
+                                                        'Predict Stock'
+                                                    )}
                                                 </Button>
                                             </CardFooter>
                                         </Card>
@@ -1231,7 +1317,6 @@ export default function GrowAGarden() {
                                                                 alt={selectedWeatherData.name}
                                                                 className="w-full h-full object-cover"
                                                                 onError={(e) => {
-                                                                    // If image fails, show icon
                                                                     e.currentTarget.style.display = 'none';
                                                                     const iconSpan = document.createElement('span');
                                                                     iconSpan.className = 'text-4xl';
@@ -1250,27 +1335,19 @@ export default function GrowAGarden() {
                                             </CardHeader>
 
                                             <CardContent>
-                                                {/* CHANGED: Updated grid to have 4 columns */}
                                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-                                                    {/* Box 1: Last Seen */}
                                                     <div className="bg-primary/10 rounded-lg p-3 text-center">
                                                         <p className="text-xs text-muted-foreground">Last Seen</p>
                                                         <p className="text-base font-semibold text-primary">{selectedWeatherData.lastSeen}</p>
                                                     </div>
-
-                                                    {/* Box 2: Total Occurrences */}
                                                     <div className="bg-primary/10 rounded-lg p-3 text-center">
                                                         <p className="text-xs text-muted-foreground">Total Occurrences</p>
                                                         <p className="text-xl font-bold text-primary">x{selectedWeatherData.count}</p>
                                                     </div>
-
-                                                    {/* Box 3: Occurrence Rate */}
                                                     <div className="bg-primary/10 rounded-lg p-3 text-center">
                                                         <p className="text-xs text-muted-foreground">Occurrence Rate</p>
                                                         <p className="text-xl font-bold text-primary">{selectedWeatherData.frequency}%</p>
                                                     </div>
-
-                                                    {/* Box 4: NEW - Frequency String */}
                                                     <div className="bg-primary/10 rounded-lg p-3 text-center">
                                                         <p className="text-xs text-muted-foreground">Frequency</p>
                                                         <p className="text-base font-semibold text-primary">
@@ -1281,48 +1358,53 @@ export default function GrowAGarden() {
 
                                                 <div>
                                                     <h4 className="text-lg font-semibold mb-4 text-center">7-Day Weather History</h4>
-                                                    <div className="h-64 min-h-[256px]">
+                                                    <div className="h-64 min-h-[256px] bg-card/30 rounded-lg border border-border/50 p-4">
                                                         <ChartContainer
                                                             config={{
                                                                 value: {
                                                                     label: "Occurrences",
-                                                                    color: "hsl(var(--primary))",
+                                                                    color: "#3b82f6",
                                                                 },
                                                             }}
                                                             className="h-full w-full"
                                                         >
                                                             <BarChart data={selectedWeatherData.forecastData}>
+                                                                <defs>
+                                                                    <linearGradient id="blueGradient" x1="0" y1="0" x2="0" y2="1">
+                                                                        <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.8} />
+                                                                        <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.9} />
+                                                                    </linearGradient>
+                                                                </defs>
+
                                                                 <ChartXAxis
                                                                     dataKey="day"
-                                                                    stroke="hsl(var(--muted-foreground))"
-                                                                    axisLine={false}
                                                                     tickLine={false}
-                                                                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                                                                    axisLine={false}
+                                                                    tickMargin={8}
+                                                                    tickFormatter={(value) => value}
                                                                 />
                                                                 <ChartYAxis
-                                                                    stroke="hsl(var(--muted-foreground))"
-                                                                    axisLine={false}
                                                                     tickLine={false}
-                                                                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                                                                    axisLine={false}
+                                                                    tickMargin={8}
                                                                 />
                                                                 <ChartTooltip
+                                                                    cursor={{ fill: 'hsl(var(--muted))', opacity: 0.3 }}
                                                                     content={
                                                                         <ChartTooltipContent
-                                                                            labelFormatter={(value: string) => value}
+                                                                            hideLabel={true}
                                                                             formatter={(value: unknown) => {
-                                                                                // Handle both number and string values
                                                                                 const numValue = typeof value === 'number' ? value :
                                                                                     typeof value === 'string' ? parseFloat(value) : 0;
-                                                                                return [`x${numValue}`, ' Occurrences'] as [string, string];
+                                                                                return [`x${numValue}`, 'Occurrences'] as [string, string];
                                                                             }}
                                                                         />
                                                                     }
                                                                 />
                                                                 <ChartBar
                                                                     dataKey="value"
-                                                                    fill="var(--color-value)"
+                                                                    fill="url(#blueGradient)"
                                                                     radius={[4, 4, 0, 0]}
-                                                                    className="transition-all hover:opacity-80"
                                                                 />
                                                             </BarChart>
                                                         </ChartContainer>
@@ -1332,21 +1414,48 @@ export default function GrowAGarden() {
 
                                             <CardFooter className="flex justify-center pt-6">
                                                 <Button
-                                                    onClick={() => alert(`Predicting weather forecast for ${selectedWeatherData.name}...`)}
+                                                    onClick={fetchPredictions}
                                                     className="w-full max-w-md"
                                                     variant="default"
+                                                    disabled={isLoadingPrediction}
                                                 >
-                                                    Predict Weather Patterns
+                                                    {isLoadingPrediction ? (
+                                                        <>
+                                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                                            Loading Predictions...
+                                                        </>
+                                                    ) : (
+                                                        'Predict Weather Patterns'
+                                                    )}
                                                 </Button>
                                             </CardFooter>
                                         </Card>
                                     ) : null}
                                 </div>
                             </div>
-                        ) :null}
+                        ) : !isLoadingForecast && selectedItem && !selectedItemData && !selectedWeatherData ? (
+                            <div className="flex flex-col items-center justify-center h-96 rounded-lg bg-amber-50/50 border border-amber-200">
+                                <div className="text-center py-8">
+                                    <div className="text-4xl mb-4 text-amber-500">📊</div>
+                                    <p className="text-lg font-semibold mb-2 text-amber-800">Historical Data Not Available</p>
+                                    <p className="text-amber-700 text-center max-w-md mb-4">
+                                        No historical statistics found for "<span className="font-semibold">{selectedItem}</span>".
+                                    </p>
+                                    <Button
+                                        onClick={() => {
+                                            setSelectedItem("");
+                                            setSelectedItemData(null);
+                                            setSelectedWeatherData(null);
+                                        }}
+                                        className="mt-6"
+                                        variant="outline"
+                                    >
+                                        ← Select Different Item
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : null}
 
-
-                        {/* PLACEHOLDER WHEN NOTHING SELECTED */}
                         {!selectedItemData && !selectedWeatherData && !isLoadingForecast && !selectedItem && availableItems.length > 0 && (
                             <div className="flex flex-col items-center justify-center h-96 rounded-lg bg-background/10">
                                 <div className="text-center py-8">
@@ -1360,6 +1469,234 @@ export default function GrowAGarden() {
                         )}
 
                     </div>
+
+                    {showPredictions && (
+                        <Card className="bg-background/20 border-primary/20 mt-8">
+                            <CardHeader>
+                                <div className="flex justify-between items-center">
+                                    <CardTitle className="text-xl">
+                                        {predictionData ? (
+                                            predictionData.error ? 'Prediction Error' :
+                                                `${predictionData.type === 'item' ? 'Stock' : 'Weather'} Predictions for ${predictionData.name}`
+                                        ) : (
+                                            'Loading Predictions...'
+                                        )}
+                                    </CardTitle>
+                                    <Button
+                                        onClick={() => {
+                                            setShowPredictions(false);
+                                            setPredictionData(null);
+                                        }}
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 w-8 p-0"
+                                    >
+                                        ×
+                                    </Button>
+                                </div>
+                                {predictionData && !predictionData.error && (
+                                    <CardDescription>
+                                        {predictionData.type === 'item' ? (
+                                            `${predictionData.category.charAt(0).toUpperCase() + predictionData.category.slice(1)} Shop • ` +
+                                            `${getIntervalLabel(getShopInterval(predictionData.category))} intervals`
+                                        ) : (
+                                            'Weather Event Predictions'
+                                        )}
+                                        {predictionData.predictionMode !== 'error' && (
+                                            <> • Mode: {predictionData.predictionMode}</>
+                                        )}
+                                    </CardDescription>
+                                )}
+                            </CardHeader>
+
+                            {isLoadingPrediction ? (
+                                <CardContent className="flex flex-col items-center justify-center py-12">
+                                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+                                    <p className="text-lg font-semibold text-muted-foreground">Loading predictions...</p>
+                                    <p className="text-sm text-gray-500 text-center max-w-md mt-2">
+                                        Analyzing historical patterns and calculating probabilities...
+                                    </p>
+                                </CardContent>
+                            ) : predictionData ? (
+                                predictionData.error ? (
+                                    <CardContent className="flex flex-col items-center justify-center py-12">
+                                        <div className="text-4xl mb-4 text-red-500">❌</div>
+                                        <p className="text-lg font-semibold text-red-600 mb-2">Prediction Failed</p>
+                                        <p className="text-sm text-gray-600 text-center max-w-md mb-4">
+                                            {predictionData.error}
+                                        </p>
+                                        <Button
+                                            onClick={fetchPredictions}
+                                            variant="outline"
+                                            className="mt-4"
+                                        >
+                                            Try Again
+                                        </Button>
+                                    </CardContent>
+                                ) : (
+                                    <CardContent className="space-y-8">
+                                        <div className="bg-primary/10 rounded-lg p-6 text-center">
+                                            <p className="text-sm text-muted-foreground mb-2">Probability for next occurrence</p>
+                                            <p className="text-4xl font-bold text-primary">
+                                                {predictionData.nextRestockProbability.toFixed(1)}% chance
+                                            </p>
+                                            <p className="text-base text-muted-foreground mt-2">
+                                                will appear at <span className="font-semibold text-primary">
+                                                    {predictionData.nextRestockTime}
+                                                </span>
+                                            </p>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                Prediction mode: {predictionData.predictionMode}
+                                            </p>
+                                        </div>
+
+                                        {predictionData.probabilityOverTime.length > 0 && (
+                                            <div>
+                                                <div className="h-48 bg-card/30 rounded-lg border border-border/50 p-4">
+                                                    <ChartContainer
+                                                        config={{
+                                                            probability: {
+                                                                label: "Probability",
+                                                                color: "#3b82f6",
+                                                            },
+                                                        }}
+                                                        className="h-full w-full"
+                                                    >
+                                                        <BarChart data={predictionData.probabilityOverTime}>
+                                                            <defs>
+                                                                <linearGradient id="lineGradient" x1="0" y1="0" x2="0" y2="1">
+                                                                    <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.8} />
+                                                                    <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.9} />
+                                                                </linearGradient>
+                                                            </defs>
+
+                                                            <ChartXAxis
+                                                                dataKey="time"
+                                                                tickLine={false}
+                                                                axisLine={false}
+                                                                tickMargin={12}
+                                                                tickFormatter={(value) => value}
+                                                            />
+                                                            <ChartYAxis
+                                                                tickLine={false}
+                                                                axisLine={false}
+                                                                tickMargin={12}
+                                                                domain={[0, 100]}
+                                                                tickFormatter={(value) => `${value}%`}
+                                                                padding={{ top: 10, bottom: 5 }}
+                                                            />
+                                                            <ChartTooltip
+                                                                cursor={{ stroke: 'hsl(var(--muted))', strokeWidth: 1 }}
+                                                                content={
+                                                                    <ChartTooltipContent
+                                                                        hideLabel={true}
+                                                                        formatter={(value: unknown, name: unknown, props: any) => {
+                                                                            const numValue = typeof value === 'number' ? value :
+                                                                                typeof value === 'string' ? parseFloat(value) : 0;
+                                                                            const label = props.payload?.label || '';
+                                                                            return [
+                                                                                `${numValue.toFixed(1)}%`,
+                                                                                label ? `Probability (${label})` : 'Probability'
+                                                                            ] as [string, string];
+                                                                        }}
+                                                                    />
+                                                                }
+                                                            />
+                                                            <Line
+                                                                type="monotone"
+                                                                dataKey="probability"
+                                                                stroke="url(#lineGradient)"
+                                                                strokeWidth={3}
+                                                                dot={{
+                                                                    r: 5,
+                                                                    fill: "#3b82f6",
+                                                                    strokeWidth: 2,
+                                                                    stroke: "#fff"
+                                                                }}
+                                                                activeDot={{
+                                                                    r: 7,
+                                                                    fill: "#1d4ed8",
+                                                                    strokeWidth: 2,
+                                                                    stroke: "#fff"
+                                                                }}
+                                                            />
+                                                        </BarChart>
+                                                    </ChartContainer>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground text-center mt-2">
+                                                    {predictionData.type === 'item' ? (
+                                                        `Probability over next ${predictionData.probabilityOverTime.length} restock cycles`
+                                                    ) : (
+                                                        `Probability over next ${predictionData.probabilityOverTime.length} time windows`
+                                                    )}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {predictionData.confidenceIntervals.length > 0 && (
+                                            <div>
+                                                <h4 className="text-lg font-semibold mb-4 text-center">Confidence Intervals</h4>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                    {predictionData.confidenceIntervals.map((interval, index) => (
+                                                        <div key={index} className="bg-primary/10 rounded-lg p-4 text-center">
+                                                            <div className="flex items-center justify-center mb-3">
+                                                                <div className={`w-3 h-3 rounded-full mr-2 ${
+                                                                    interval.confidence >= 90 ? 'bg-green-500' :
+                                                                        interval.confidence >= 85 ? 'bg-blue-500' :
+                                                                            'bg-blue-400'
+                                                                }`}></div>
+                                                                <span className="text-sm font-medium text-foreground">
+                                                                    {interval.confidence}% Confidence
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-muted-foreground">
+                                                                Will appear at {interval.predictedTime} within<br />
+                                                                <span className="text-2xl font-bold text-primary mb-1 mt-2 block">
+                                                                    {interval.label}
+                                                                </span>
+                                                            </p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {predictionData.probabilityOverTime.length === 0 && predictionData.confidenceIntervals.length === 0 && (
+                                            <div className="text-center py-8">
+                                                <p className="text-gray-500">No detailed prediction data available</p>
+                                            </div>
+                                        )}
+                                    </CardContent>
+                                )
+                            ) : (
+                                <CardContent className="flex flex-col items-center justify-center py-12">
+                                    <div className="text-4xl mb-4 opacity-30">📊</div>
+                                    <p className="text-lg font-semibold text-muted-foreground">No prediction data available</p>
+                                    <p className="text-sm text-gray-500 text-center max-w-md mt-2">
+                                        Could not load predictions. Please try again.
+                                    </p>
+                                    <Button
+                                        onClick={fetchPredictions}
+                                        variant="outline"
+                                        className="mt-4"
+                                    >
+                                        Retry
+                                    </Button>
+                                </CardContent>
+                            )}
+
+                            <CardFooter className="border-t border-border/50 pt-6">
+                                <div className="text-xs text-muted-foreground text-center w-full">
+                                    {predictionData ? (
+                                        predictionData.error ? 'Error fetching predictions' :
+                                            `Predictions based on ${predictionData.predictionMode} analysis`
+                                    ) : (
+                                        'Predictions based on historical appearance patterns'
+                                    )}
+                                </div>
+                            </CardFooter>
+                        </Card>
+                    )}
                 </div>
             </div>
         </AppLayout>
